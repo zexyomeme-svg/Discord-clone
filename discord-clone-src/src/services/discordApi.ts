@@ -14,6 +14,13 @@ function buildApiUrl(endpoint: string) {
 
 export type AuthMode = 'bot' | 'oauth';
 
+const GATEWAY_INTENTS =
+  1 |      // GUILDS
+  2 |      // GUILD_MEMBERS
+  512 |    // GUILD_MESSAGES
+  4096 |   // DIRECT_MESSAGES
+  32768;  // MESSAGE_CONTENT privileged intent
+
 export function normalizeBotToken(token: string) {
   return token.trim().replace(/^Bot\s+/i, '');
 }
@@ -53,10 +60,11 @@ async function apiRequest(endpoint: string, token: string, options: RequestInit 
   if (res.ok) return data;
 
   if (res.status === 401) {
-    throw new Error('Invalid bot token. Personal account/user tokens are not supported.');
+    throw new Error(mode === 'oauth' ? 'Discord OAuth2 session expired. Please log in again.' : 'Invalid bot token. Personal account/user tokens are not supported.');
   }
   if (res.status === 403) {
-    throw new Error('Forbidden. You do not have access to this resource.');
+    const detail = typeof data === 'object' && data?.message ? ` Discord says: ${data.message}.` : '';
+    throw new Error(`Forbidden.${detail} Check that the bot has View Channel, Read Message History, and Send Messages permissions for this channel.`);
   }
   if (res.status === 429) {
     const retryAfter = Number(data?.retry_after ?? res.headers.get('retry-after') ?? 1);
@@ -104,15 +112,24 @@ export async function getChannel(token: string, channelId: string) {
 }
 
 export async function getChannelMessages(token: string, channelId: string, limit = 50, before?: string) {
-  let url = `/channels/${channelId}/messages?limit=${limit}`;
+  const safeLimit = Math.max(1, Math.min(100, limit));
+  let url = `/channels/${channelId}/messages?limit=${safeLimit}`;
   if (before) url += `&before=${before}`;
   return apiRequest(url, token);
 }
 
 export async function sendMessage(token: string, channelId: string, content: string) {
+  const trimmed = content.trim();
+  if (!trimmed) throw new Error('Cannot send an empty message.');
+  if (trimmed.length > 2000) throw new Error('Discord messages must be 2000 characters or fewer.');
+
   return apiRequest(`/channels/${channelId}/messages`, token, {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({
+      content: trimmed,
+      tts: false,
+      nonce: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    }),
   });
 }
 
@@ -173,7 +190,7 @@ export function connectGateway(token: string, handlers: {
             op: 2,
             d: {
               token: gatewayToken,
-              intents: 33281, // GUILDS | GUILD_MESSAGES | GUILD_MEMBERS | DIRECT_MESSAGES
+              intents: GATEWAY_INTENTS,
               properties: {
                 os: 'browser',
                 browser: 'disclone',

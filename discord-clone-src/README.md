@@ -125,6 +125,25 @@ Bot YOUR_BOT_TOKEN
 
 The frontend normalizes the value before sending requests, so the Discord API receives the expected `Authorization: Bot ...` header.
 
+## Message loading and sending
+
+For bot-token mode, this app uses Discord's documented Channel endpoints:
+
+- `GET /channels/{channel.id}/messages` to load recent and older messages.
+- `POST /channels/{channel.id}/messages` to send a message.
+
+Discord requires the bot to have the right server/channel permissions. At minimum, invite the bot with these permissions and make sure channel overwrites do not deny them:
+
+- **View Channels**
+- **Read Message History**
+- **Send Messages**
+
+To receive live gateway message events and full message content, enable the **Message Content Intent** in the Discord Developer Portal under **Bot → Privileged Gateway Intents**. The app requests Gateway intents for guilds, guild members, guild messages, direct messages, and message content. Without the Message Content intent, Discord may return message objects but hide message text/content in some situations.
+
+Discord message content has a 2000 character limit for normal messages. The frontend validates this before sending.
+
+OAuth2 login can show the signed-in user and guild list, but OAuth2 user tokens from the official flow cannot be used to act like the Discord client, read arbitrary private messages, or send messages as the user. Use bot-token mode for loading and sending channel messages.
+
 ## Discord OAuth2 login
 
 This project now supports official Discord OAuth2 Authorization Code login. Discord's OAuth2 docs describe the authorization code grant as the standard flow where the user is redirected to Discord, Discord returns a temporary `code`, and the backend exchanges that code for a Bearer access token without ever asking for the user's password or personal token [1](https://discord.com/developers/docs/topics/oauth2).

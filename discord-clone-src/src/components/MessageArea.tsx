@@ -170,7 +170,7 @@ function WelcomeMsg({ channel }: { channel?: Channel }) {
 }
 
 export default function MessageArea() {
-  const { selectedChannelId, selectedGuildId, channels, messages, isLoadingMessages, sendMessage: send, loadMoreMessages, toggleMemberList, showMemberList, typingUsers, userSettings } = useStore();
+  const { selectedChannelId, selectedGuildId, channels, messages, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, toggleMemberList, showMemberList, typingUsers, userSettings } = useStore();
   const [input, setInput] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -179,6 +179,7 @@ export default function MessageArea() {
   const msgs = selectedChannelId ? messages[selectedChannelId] || [] : [];
   const guildCh = selectedGuildId ? channels[selectedGuildId] || [] : [];
   const ch = guildCh.find(c => c.id === selectedChannelId);
+  const isSending = selectedChannelId ? Boolean(isSendingMessages[selectedChannelId]) : false;
   const typing = (selectedChannelId ? typingUsers[selectedChannelId] || [] : []).filter(t => Date.now() - t.timestamp < 10000);
 
   useEffect(() => { if (autoScroll) endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs.length, autoScroll]);
@@ -194,7 +195,7 @@ export default function MessageArea() {
     e.preventDefault();
     if (!input.trim() || !selectedChannelId) return;
     const msg = input; setInput('');
-    await send(selectedChannelId, msg);
+    try { await send(selectedChannelId, msg); } catch { setInput(msg); }
   };
 
   if (!selectedChannelId) {
@@ -233,6 +234,9 @@ export default function MessageArea() {
 
       {/* Messages */}
       <div ref={containerRef} className="flex-1 overflow-y-auto min-h-0" onScroll={onScroll}>
+        {isLoadingMoreMessages && msgs.length > 0 && (
+          <div className="flex items-center justify-center py-3 text-xs text-discord-text-muted"><Loader2 size={16} className="animate-spin mr-2" />Loading older messages...</div>
+        )}
         {isLoadingMessages && !msgs.length ? (
           <div className="flex items-center justify-center h-full"><Loader2 size={32} className="animate-spin text-discord-text-muted" /></div>
         ) : (
@@ -272,9 +276,9 @@ export default function MessageArea() {
       <form onSubmit={handleSend} className="px-4 pb-6 flex-shrink-0">
         <div className="bg-discord-input rounded-lg flex items-end">
           <button type="button" className="p-[10px] text-discord-text-muted hover:text-discord-text transition-colors flex-shrink-0"><PlusCircle size={22} /></button>
-          <textarea value={input} onChange={e => setInput(e.target.value)}
+          <textarea value={input} onChange={e => setInput(e.target.value)} disabled={isSending}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
-            placeholder={`Message #${ch?.name || 'channel'}`}
+            placeholder={isSending ? 'Sending...' : `Message #${ch?.name || 'channel'}`}
             className="flex-1 bg-transparent text-discord-text py-[10px] outline-none resize-none max-h-[50vh] placeholder:text-discord-text-muted leading-[22px]"
             style={{ fontSize: `${userSettings.fontSize}px`, minHeight: '22px' }}
             rows={1}
@@ -283,6 +287,7 @@ export default function MessageArea() {
             <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Gift size={22} /></button>
             <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Sticker size={22} /></button>
             <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Smile size={22} /></button>
+            {isSending && <Loader2 size={18} className="animate-spin text-discord-text-muted mx-1" />}
           </div>
         </div>
       </form>

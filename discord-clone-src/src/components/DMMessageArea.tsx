@@ -84,7 +84,7 @@ function DMWelcome({ channel }: { channel: Channel }) {
 }
 
 export default function DMMessageArea() {
-  const { selectedChannelId, dmChannels, messages, isLoadingMessages, sendMessage: send, loadMoreMessages, userSettings } = useStore();
+  const { selectedChannelId, dmChannels, messages, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, userSettings } = useStore();
   const [input, setInput] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -94,6 +94,7 @@ export default function DMMessageArea() {
   const ch = dmChannels.find(c => c.id === selectedChannelId);
   const r = ch?.recipients?.[0];
   const rName = r?.global_name || r?.username || 'Unknown';
+  const isSending = selectedChannelId ? Boolean(isSendingMessages[selectedChannelId]) : false;
 
   useEffect(() => { if (autoScroll) endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs.length, autoScroll]);
   const onScroll = useCallback(() => {
@@ -102,7 +103,7 @@ export default function DMMessageArea() {
     if (el.scrollTop < 100 && selectedChannelId && !isLoadingMessages) loadMoreMessages(selectedChannelId);
   }, [selectedChannelId, isLoadingMessages, loadMoreMessages]);
 
-  const handleSend = async (e: React.FormEvent) => { e.preventDefault(); if (!input.trim() || !selectedChannelId) return; const m = input; setInput(''); await send(selectedChannelId, m); };
+  const handleSend = async (e: React.FormEvent) => { e.preventDefault(); if (!input.trim() || !selectedChannelId) return; const m = input; setInput(''); try { await send(selectedChannelId, m); } catch { setInput(m); } };
 
   if (!selectedChannelId || !ch) {
     return (
@@ -131,6 +132,9 @@ export default function DMMessageArea() {
       </div>
 
       <div ref={containerRef} className="flex-1 overflow-y-auto min-h-0" onScroll={onScroll}>
+        {isLoadingMoreMessages && msgs.length > 0 && (
+          <div className="flex items-center justify-center py-3 text-xs text-discord-text-muted"><Loader2 size={16} className="animate-spin mr-2" />Loading older messages...</div>
+        )}
         {isLoadingMessages && !msgs.length ? (
           <div className="flex items-center justify-center h-full"><Loader2 size={32} className="animate-spin text-discord-text-muted" /></div>
         ) : (
@@ -152,9 +156,9 @@ export default function DMMessageArea() {
       <form onSubmit={handleSend} className="px-4 pb-6 flex-shrink-0">
         <div className="bg-discord-input rounded-lg flex items-end">
           <button type="button" className="p-[10px] text-discord-text-muted hover:text-discord-text transition-colors flex-shrink-0"><PlusCircle size={22} /></button>
-          <textarea value={input} onChange={e => setInput(e.target.value)}
+          <textarea value={input} onChange={e => setInput(e.target.value)} disabled={isSending}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
-            placeholder={`Message @${rName}`}
+            placeholder={isSending ? 'Sending...' : `Message @${rName}`}
             className="flex-1 bg-transparent text-discord-text py-[10px] outline-none resize-none max-h-[50vh] placeholder:text-discord-text-muted leading-[22px]"
             style={{ fontSize: `${userSettings.fontSize}px`, minHeight: '22px' }}
             rows={1}
@@ -163,6 +167,7 @@ export default function DMMessageArea() {
             <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Gift size={22} /></button>
             <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Sticker size={22} /></button>
             <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Smile size={22} /></button>
+            {isSending && <Loader2 size={18} className="animate-spin text-discord-text-muted mx-1" />}
           </div>
         </div>
       </form>

@@ -44,6 +44,9 @@ interface AppState {
   showMemberList: boolean;
   showUserProfile: DiscordUser | null;
   isLoadingMessages: boolean;
+  isLoadingMoreMessages: boolean;
+  hasMoreMessages: Record<string, boolean>;
+  isSendingMessages: Record<string, boolean>;
   isLoadingChannels: boolean;
 
   // Settings
@@ -96,6 +99,9 @@ const useStore = create<AppState>((set, get) => ({
   showMemberList: true,
   showUserProfile: null,
   isLoadingMessages: false,
+  isLoadingMoreMessages: false,
+  hasMoreMessages: {},
+  isSendingMessages: {},
   isLoadingChannels: false,
   settingsOpen: false,
   settingsPage: 'my-account',
@@ -236,46 +242,70 @@ const useStore = create<AppState>((set, get) => ({
   },
 
   loadMessages: async (channelId: string) => {
-    const { token } = get();
-    if (!token) return;
-    set({ isLoadingMessages: true });
+    const { token, authMode } = get();
+    if (!token || authMode !== 'bot') return;
+    set({ isLoadingMessages: true, error: null });
     try {
       const msgs = await api.getChannelMessages(token, channelId, 50);
-      set({ messages: { ...get().messages, [channelId]: (msgs || []).reverse() }, isLoadingMessages: false });
-    } catch {
-      set({ isLoadingMessages: false });
+      set({
+        messages: { ...get().messages, [channelId]: (msgs || []).reverse() },
+        hasMoreMessages: { ...get().hasMoreMessages, [channelId]: (msgs || []).length === 50 },
+        isLoadingMessages: false,
+      });
+    } catch (err: any) {
+      set({ isLoadingMessages: false, error: err.message || 'Failed to load messages' });
     }
   },
 
   loadMoreMessages: async (channelId: string) => {
-    const { token, messages: all } = get();
-    if (!token) return;
+    const { token, authMode, messages: all, hasMoreMessages, isLoadingMoreMessages } = get();
+    if (!token || authMode !== 'bot' || isLoadingMoreMessages || hasMoreMessages[channelId] === false) return;
     const msgs = all[channelId] || [];
     if (!msgs.length) return;
-    set({ isLoadingMessages: true });
+    set({ isLoadingMoreMessages: true, error: null });
     try {
       const older = await api.getChannelMessages(token, channelId, 50, msgs[0].id);
       if (older?.length) {
-        set({ messages: { ...get().messages, [channelId]: [...older.reverse(), ...msgs] }, isLoadingMessages: false });
+        set({
+          messages: { ...get().messages, [channelId]: [...older.reverse(), ...(get().messages[channelId] || msgs)] },
+          hasMoreMessages: { ...get().hasMoreMessages, [channelId]: older.length === 50 },
+          isLoadingMoreMessages: false,
+        });
       } else {
-        set({ isLoadingMessages: false });
+        set({ hasMoreMessages: { ...get().hasMoreMessages, [channelId]: false }, isLoadingMoreMessages: false });
       }
-    } catch {
-      set({ isLoadingMessages: false });
+    } catch (err: any) {
+      set({ isLoadingMoreMessages: false, error: err.message || 'Failed to load older messages' });
     }
   },
 
   sendMessage: async (channelId: string, content: string) => {
-    const { token, user } = get();
-    if (!token || !user || !content.trim()) return;
+    const { token, authMode, user } = get();
+    if (!token || !user || authMode !== 'bot' || !content.trim()) return;
+    if (content.trim().length > 2000) {
+      set({ error: 'Discord messages must be 2000 characters or fewer.' });
+      throw new Error('Discord messages must be 2000 characters or fewer.');
+    }
     const tempId = `temp-${Date.now()}`;
     const tempMsg: Message = { id: tempId, channel_id: channelId, author: user, content: content.trim(), timestamp: new Date().toISOString(), edited_timestamp: null, tts: false, mention_everyone: false, mentions: [], attachments: [], embeds: [], pinned: false, type: 0 };
-    set({ messages: { ...get().messages, [channelId]: [...(get().messages[channelId] || []), tempMsg] } });
+    set({
+      error: null,
+      isSendingMessages: { ...get().isSendingMessages, [channelId]: true },
+      messages: { ...get().messages, [channelId]: [...(get().messages[channelId] || []), tempMsg] },
+    });
     try {
       const sent = await api.sendMessage(token, channelId, content.trim());
-      set({ messages: { ...get().messages, [channelId]: (get().messages[channelId] || []).map((m: Message) => m.id === tempId ? sent : m) } });
+      set({
+        isSendingMessages: { ...get().isSendingMessages, [channelId]: false },
+        messages: { ...get().messages, [channelId]: (get().messages[channelId] || []).map((m: Message) => m.id === tempId ? sent : m) },
+      });
     } catch (err: any) {
-      set({ messages: { ...get().messages, [channelId]: (get().messages[channelId] || []).filter((m: Message) => m.id !== tempId) }, error: 'Failed to send: ' + err.message });
+      set({
+        isSendingMessages: { ...get().isSendingMessages, [channelId]: false },
+        messages: { ...get().messages, [channelId]: (get().messages[channelId] || []).filter((m: Message) => m.id !== tempId) },
+        error: 'Failed to send: ' + (err.message || 'Unknown error'),
+      });
+      throw err;
     }
   },
 
