@@ -3,11 +3,18 @@
 This app serves the Vite production build from ./dist and exposes a small
 same-origin proxy at /api/discord/* so the React app can call Discord's REST API
 without relying on public CORS proxies.
+
+If ./dist/index.html is missing, run.py can automatically install Node packages
+and run the Vite build before the server starts. This makes `python run.py` and
+`gunicorn run:app` work even when the build output was not committed.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Iterable
 
@@ -17,8 +24,21 @@ from flask_cors import CORS
 
 BASE_DIR = Path(__file__).resolve().parent
 DIST_DIR = BASE_DIR / "dist"
+INDEX_FILE = DIST_DIR / "index.html"
+PACKAGE_JSON = BASE_DIR / "package.json"
+PACKAGE_LOCK = BASE_DIR / "package-lock.json"
+NODE_MODULES = BASE_DIR / "node_modules"
+
 DISCORD_API_BASE = os.environ.get("DISCORD_API_BASE", "https://discord.com/api/v10").rstrip("/")
 REQUEST_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "30"))
+AUTO_BUILD_FRONTEND = os.environ.get("AUTO_BUILD_FRONTEND", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+
+_build_error: str | None = None
 
 
 def _cors_origins() -> str | list[str]:
@@ -27,6 +47,67 @@ def _cors_origins() -> str | list[str]:
         return "*"
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
 
+
+def _run_command(command: list[str], description: str) -> None:
+    """Run a setup command and raise a helpful error if it fails."""
+    print(f"[startup] {description}: {' '.join(command)}", flush=True)
+    try:
+        subprocess.run(command, cwd=BASE_DIR, check=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Could not run `{command[0]}`. Make sure Node.js and npm are installed."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"{description} failed with exit code {exc.returncode}.") from exc
+
+
+def ensure_frontend_build() -> None:
+    """Build the Vite frontend automatically when dist/index.html is missing."""
+    global _build_error
+
+    if INDEX_FILE.exists():
+        return
+
+    if not AUTO_BUILD_FRONTEND:
+        _build_error = (
+            "Vite build not found and AUTO_BUILD_FRONTEND is disabled. "
+            "Run `npm install && npm run build`, or set AUTO_BUILD_FRONTEND=1."
+        )
+        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
+        return
+
+    if not PACKAGE_JSON.exists():
+        _build_error = f"Cannot build frontend because {PACKAGE_JSON.name} was not found."
+        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
+        return
+
+    if shutil.which("npm") is None:
+        _build_error = "Cannot build frontend automatically because npm was not found. Install Node.js/npm."
+        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
+        return
+
+    try:
+        if not NODE_MODULES.exists():
+            install_command = ["npm", "ci"] if PACKAGE_LOCK.exists() else ["npm", "install"]
+            _run_command(install_command, "Installing frontend dependencies")
+
+        _run_command(["npm", "run", "build"], "Building frontend")
+    except RuntimeError as exc:
+        _build_error = str(exc)
+        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
+        return
+
+    if INDEX_FILE.exists():
+        _build_error = None
+        print(f"[startup] Frontend build ready: {INDEX_FILE}", flush=True)
+    else:
+        _build_error = "Frontend build command completed, but dist/index.html was not created."
+        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
+
+
+# Build during import as well as when running `python run.py`; this is important
+# for `gunicorn run:app`, where the __main__ block is not executed.
+ensure_frontend_build()
 
 app = Flask(__name__, static_folder=None)
 CORS(app, resources={r"/api/*": {"origins": _cors_origins()}})
@@ -95,8 +176,12 @@ def _select_response_headers(headers: Iterable[tuple[str, str]]) -> dict[str, st
 
 
 @app.get("/healthz")
-def healthz() -> tuple[dict[str, str], int]:
-    return {"status": "ok"}, 200
+def healthz() -> tuple[dict[str, str | bool | None], int]:
+    return {
+        "status": "ok",
+        "frontendBuilt": INDEX_FILE.exists(),
+        "buildError": _build_error,
+    }, 200
 
 
 @app.route("/api/discord/<path:endpoint>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -131,16 +216,19 @@ def serve_spa(path: str):
     if path.startswith("api/"):
         return jsonify({"message": "Not found"}), 404
 
+    if not INDEX_FILE.exists():
+        ensure_frontend_build()
+
     requested = DIST_DIR / path
     if path and requested.is_file():
         return send_from_directory(DIST_DIR, path)
 
-    index_file = DIST_DIR / "index.html"
-    if index_file.exists():
+    if INDEX_FILE.exists():
         return send_from_directory(DIST_DIR, "index.html")
 
     return (
-        "Vite build not found. Run `npm run build` before starting the Python server.",
+        "Frontend build failed or is missing. "
+        f"{_build_error or 'Run `npm install && npm run build` and restart the server.'}",
         500,
         {"Content-Type": "text/plain; charset=utf-8"},
     )

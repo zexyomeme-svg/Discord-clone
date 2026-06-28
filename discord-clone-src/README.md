@@ -1,14 +1,15 @@
 # Discord Clone — Render Ready
 
-A Discord-style web client built with React, Vite, Tailwind CSS, Zustand, and a small Flask server for production hosting on Render. The app uses a Discord **bot token** entered in the login form and stores it only in the browser's local storage.
+A Discord-style web client built with React, Vite, Tailwind CSS, Zustand, and a small Flask server for production hosting on Render. The app uses a Discord **bot token** entered in the login form and stores it only in the browser's local storage. `run.py` automatically installs/builds the frontend if `dist/index.html` is missing.
 
 > **Important:** This project is intended for bot-token based testing/development. Keep tokens private, never commit secrets, and follow Discord's Developer Terms and API rules.
 
 ## What was optimized for Render
 
 - Added `run.py`, a Flask entrypoint that:
+  - automatically runs `npm ci`/`npm install` and `npm run build` if `dist/index.html` is missing,
   - serves the Vite production build from `dist/`,
-  - provides a `/healthz` health check,
+  - provides a `/healthz` health check with frontend build status,
   - provides a same-origin `/api/discord/*` proxy to avoid browser CORS issues for Discord REST API calls.
 - Added `requirements.txt` with Flask, Gunicorn, CORS, and Requests dependencies.
 - Added `render.yaml` with build and start commands.
@@ -53,14 +54,20 @@ npm run dev
 
 Open the Vite URL printed in the terminal. For full API functionality without CORS errors, test the production server locally instead, because `python run.py` provides the `/api/discord/*` proxy used by the frontend.
 
-### 3. Test the production server locally
+### 3. Start the full Python server locally
+
+```bash
+python run.py
+```
+
+`run.py` checks for `dist/index.html` at startup. If the file is missing, it automatically installs frontend dependencies and runs `npm run build`, then starts Flask. Open <http://localhost:8000>.
+
+If you want to build manually first, you can still run:
 
 ```bash
 npm run build
 python run.py
 ```
-
-Then open <http://localhost:8000>.
 
 ## Deploy on Render
 
@@ -101,6 +108,7 @@ Render usually provides Node during builds. If your service does not, add the en
 | `CORS_ORIGINS` | `*` | CORS setting for `/api/*`; same-origin production use usually does not need this changed. |
 | `PROXY_TIMEOUT` | `30` | Discord proxy request timeout in seconds. |
 | `FLASK_DEBUG` | `0` | Set to `1` only for local debugging. |
+| `AUTO_BUILD_FRONTEND` | `1` | When enabled, `run.py` automatically installs/builds the Vite frontend if `dist/index.html` is missing. Set to `0` to disable. |
 
 ## Login / token format
 
@@ -119,6 +127,7 @@ The frontend normalizes the value before sending requests, so the Discord API re
 - The app expects a Discord bot token entered in the login form. Do not hard-code this token in source code or environment variables.
 - Some Discord API features require privileged bot intents and proper server permissions.
 - `vite-plugin-singlefile` is enabled, so the production build is a compact single `dist/index.html` bundle.
+- On Render, the `render.yaml` build command still runs `npm ci && npm run build` for a faster, predictable deploy. The auto-build in `run.py` is a fallback for missing build output.
 
 ## Verification commands used
 
@@ -127,4 +136,5 @@ npm install
 npx tsc --noEmit
 npm run build
 python -m py_compile run.py
+python run.py
 ```
