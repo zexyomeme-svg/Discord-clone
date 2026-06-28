@@ -196,3 +196,23 @@ html, body, #root {
   border-right-color: #111214;
 }
 .tooltip-container:hover .tooltip-text { visibility: visible; opacity: 1; }
+
+
+/* Responsive/mobile polish */
+:root { color-scheme: dark; }
+@supports (height: 100dvh) {
+  html, body, #root { height: 100dvh; }
+}
+
+@media (max-width: 767px) {
+  html, body, #root { overflow: hidden; }
+  .msg-actions { right: 8px; top: -12px; }
+  .message-hover { padding-left: 12px; padding-right: 12px; }
+  textarea, input, button, select { font-size: 16px; }
+  .channel-scroll::-webkit-scrollbar,
+  .thin-scroll::-webkit-scrollbar { width: 3px; }
+}
+
+@media (min-width: 1280px) {
+  .desktop-comfortable .message-hover { padding-left: 1.25rem; padding-right: 1.25rem; }
+}

@@ -126,6 +126,15 @@ Bot YOUR_BOT_TOKEN
 
 The frontend normalizes the value before sending requests, so the Discord API receives the expected `Authorization: Bot ...` header.
 
+## Responsive UI
+
+The app now has separate layouts for desktop/tablet and phones:
+
+- **Desktop/computer (`md` and wider):** Discord-style multi-column layout with server rail, channel/DM sidebar, main chat, and optional member list.
+- **Mobile (`< md`):** single-panel navigation with a top bar and bottom nav for Servers, Channels/DMs, Chat, and Members. This avoids squeezing desktop sidebars onto small screens and keeps touch targets large.
+
+The mobile layout follows Discord's familiar navigation model: servers/channels are panels, chat is the main view, and the member list is a separate panel accessible from chat.
+
 ## Message loading and sending
 
 For bot-token mode, this app uses Discord's documented Channel endpoints:
