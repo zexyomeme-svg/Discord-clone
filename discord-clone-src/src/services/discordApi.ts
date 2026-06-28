@@ -12,21 +12,23 @@ function buildApiUrl(endpoint: string) {
   return `${DISCORD_API_BASE}${endpoint}`;
 }
 
+export type AuthMode = 'bot' | 'oauth';
+
 export function normalizeBotToken(token: string) {
   return token.trim().replace(/^Bot\s+/i, '');
 }
 
-function getHeaders(token: string) {
-  const cleanToken = normalizeBotToken(token);
+function getHeaders(token: string, mode: AuthMode = 'bot') {
+  const cleanToken = mode === 'bot' ? normalizeBotToken(token) : token.trim().replace(/^Bearer\s+/i, '');
   return {
-    'Authorization': `Bot ${cleanToken}`,
+    'Authorization': mode === 'bot' ? `Bot ${cleanToken}` : `Bearer ${cleanToken}`,
     'Content-Type': 'application/json',
   };
 }
 
 
 
-async function apiRequest(endpoint: string, token: string, options: RequestInit = {}): Promise<any> {
+async function apiRequest(endpoint: string, token: string, options: RequestInit = {}, mode: AuthMode = 'bot'): Promise<any> {
   const url = buildApiUrl(endpoint);
 
   let res: Response;
@@ -34,7 +36,7 @@ async function apiRequest(endpoint: string, token: string, options: RequestInit 
     res = await fetch(url, {
       ...options,
       headers: {
-        ...getHeaders(token),
+        ...getHeaders(token, mode),
         ...(options.headers || {}),
       },
     });
@@ -51,7 +53,7 @@ async function apiRequest(endpoint: string, token: string, options: RequestInit 
   if (res.ok) return data;
 
   if (res.status === 401) {
-    throw new Error('Invalid token. Please check your token and try again.');
+    throw new Error('Invalid bot token. Personal account/user tokens are not supported.');
   }
   if (res.status === 403) {
     throw new Error('Forbidden. You do not have access to this resource.');
@@ -59,7 +61,7 @@ async function apiRequest(endpoint: string, token: string, options: RequestInit 
   if (res.status === 429) {
     const retryAfter = Number(data?.retry_after ?? res.headers.get('retry-after') ?? 1);
     await new Promise(r => setTimeout(r, retryAfter * 1000));
-    return apiRequest(endpoint, token, options);
+    return apiRequest(endpoint, token, options, mode);
   }
 
   const message = typeof data === 'object' && data?.message ? data.message : `API Error: ${res.status}`;
@@ -67,8 +69,8 @@ async function apiRequest(endpoint: string, token: string, options: RequestInit 
 }
 
 // User
-export async function getCurrentUser(token: string) {
-  return apiRequest('/users/@me', token);
+export async function getCurrentUser(token: string, mode: AuthMode = 'bot') {
+  return apiRequest('/users/@me', token, {}, mode);
 }
 
 export async function getUserProfile(token: string, userId: string) {
@@ -76,8 +78,8 @@ export async function getUserProfile(token: string, userId: string) {
 }
 
 // Guilds (Servers)
-export async function getGuilds(token: string) {
-  return apiRequest('/users/@me/guilds', token);
+export async function getGuilds(token: string, mode: AuthMode = 'bot') {
+  return apiRequest('/users/@me/guilds', token, {}, mode);
 }
 
 export async function getGuild(token: string, guildId: string) {

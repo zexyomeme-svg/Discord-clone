@@ -5,8 +5,7 @@ services:
     plan: free
     buildCommand: |
       pip install -r requirements.txt
-      npm ci
-      npm run build
+      python run.py --build-only
     startCommand: gunicorn run:app --bind 0.0.0.0:$PORT
     healthCheckPath: /healthz
     envVars:
@@ -14,3 +13,11 @@ services:
         value: 3.13.4
       - key: NODE_VERSION
         value: 20.20.2
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_OAUTH_SCOPES
+        value: identify email guilds
+      - key: PUBLIC_BASE_URL
+        sync: false

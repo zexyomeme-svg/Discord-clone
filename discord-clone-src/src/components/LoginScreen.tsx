@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Eye, EyeOff, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
 import useStore from '../store/useStore';
 
 export default function LoginScreen() {
@@ -7,6 +7,14 @@ export default function LoginScreen() {
   const [showToken, setShowToken] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const { login, isLoading, error } = useStore();
+  const [oauthEnabled, setOauthEnabled] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/oauth/config')
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => setOauthEnabled(Boolean(data?.enabled)))
+      .catch(() => setOauthEnabled(false));
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,7 +58,7 @@ export default function LoginScreen() {
                   type={showToken ? 'text' : 'password'}
                   value={token}
                   onChange={(e) => { setToken(e.target.value); setLocalError(null); }}
-                  placeholder="Enter your bot token"
+                  placeholder="Enter your Discord bot token"
                   className="w-full bg-discord-dark text-discord-text rounded px-3 py-2.5 pr-10 text-base outline-none border border-transparent focus:border-discord-blurple transition-colors h-10"
                   disabled={isLoading}
                   autoFocus
@@ -64,15 +72,34 @@ export default function LoginScreen() {
 
             <button type="submit" disabled={isLoading}
               className="w-full bg-discord-blurple hover:bg-discord-blurple-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded transition-colors flex items-center justify-center gap-2 h-11 text-base">
-              {isLoading ? (<><Loader2 size={20} className="animate-spin" />Connecting...</>) : 'Log In'}
+              {isLoading ? (<><Loader2 size={20} className="animate-spin" />Connecting...</>) : 'Log In with Bot Token'}
             </button>
           </form>
 
-          <div className="mt-4">
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-discord-dark" />
+            <span className="text-xs uppercase tracking-wide text-discord-text-muted font-semibold">or</span>
+            <div className="h-px flex-1 bg-discord-dark" />
+          </div>
+
+          <a href="/auth/discord/login"
+            className={`w-full ${oauthEnabled ? 'bg-[#5865F2] hover:bg-[#4752C4]' : 'bg-discord-input opacity-60 pointer-events-none'} text-white font-medium py-2.5 rounded transition-colors flex items-center justify-center gap-2 h-11 text-base`}>
+            <ExternalLink size={18} /> Continue with Discord OAuth2
+          </a>
+          {!oauthEnabled && (
+            <p className="mt-2 text-xs text-discord-text-muted leading-relaxed">
+              OAuth2 login is disabled until DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are configured on the server.
+            </p>
+          )}
+
+          <div className="mt-4 space-y-2">
             <p className="text-sm text-discord-text-muted">
-              Need a token?{' '}
+              Need a bot token?{' '}
               <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer"
                 className="text-discord-text-link hover:underline">Discord Developer Portal</a>
+            </p>
+            <p className="text-xs text-discord-text-muted leading-relaxed">
+              Personal account/user tokens are not supported. Use an official Discord bot token or the Discord OAuth2 button.
             </p>
           </div>
 
@@ -85,7 +112,7 @@ export default function LoginScreen() {
                   <li>Visit <span className="text-discord-text-link">discord.com/developers</span></li>
                   <li>Create a New Application → Bot → Reset Token</li>
                   <li>Enable <strong className="text-discord-text">Privileged Gateway Intents</strong></li>
-                  <li>Invite bot to server, then paste token above</li>
+                  <li>Invite bot to server, then paste the bot token above</li>
                 </ol>
               </div>
             </div>

@@ -1,8 +1,8 @@
 # Discord Clone — Render Ready
 
-A Discord-style web client built with React, Vite, Tailwind CSS, Zustand, and a small Flask server for production hosting on Render. The app uses a Discord **bot token** entered in the login form and stores it only in the browser's local storage. `run.py` automatically installs/builds the frontend if `dist/index.html` is missing.
+A Discord-style web client built with React, Vite, Tailwind CSS, Zustand, and a small Flask server for production hosting on Render. The app uses a Discord **bot token** entered in the login form and stores it only in the browser's local storage. Personal account/user tokens are intentionally not supported. `run.py` automatically installs/builds the frontend if `dist/index.html` is missing.
 
-> **Important:** This project is intended for bot-token based testing/development. Keep tokens private, never commit secrets, and follow Discord's Developer Terms and API rules.
+> **Important:** This project is intended for official bot-token based testing/development. Keep tokens private, never commit secrets, and follow Discord's Developer Terms and API rules.
 
 ## What was optimized for Render
 
@@ -124,6 +124,75 @@ Bot YOUR_BOT_TOKEN
 ```
 
 The frontend normalizes the value before sending requests, so the Discord API receives the expected `Authorization: Bot ...` header.
+
+## Discord OAuth2 login
+
+This project now supports official Discord OAuth2 Authorization Code login. Discord's OAuth2 docs describe the authorization code grant as the standard flow where the user is redirected to Discord, Discord returns a temporary `code`, and the backend exchanges that code for a Bearer access token without ever asking for the user's password or personal token [1](https://discord.com/developers/docs/topics/oauth2).
+
+### 1. Create/configure your Discord application
+
+1. Go to <https://discord.com/developers/applications>.
+2. Open your application, or create a new one.
+3. Go to **OAuth2**.
+4. Copy the **Client ID** and **Client Secret**.
+5. Add this redirect URL:
+
+   ```text
+   https://YOUR-RENDER-APP.onrender.com/auth/discord/callback
+   ```
+
+   For local testing, add:
+
+   ```text
+   http://localhost:8000/auth/discord/callback
+   ```
+
+6. Use these scopes:
+
+   ```text
+   identify email guilds
+   ```
+
+`identify` allows `/users/@me`, and `guilds` allows `/users/@me/guilds` for basic guild membership data [1](https://discord.com/developers/docs/topics/oauth2).
+
+### 2. Set environment variables
+
+On Render, set these environment variables:
+
+```env
+DISCORD_CLIENT_ID=your_client_id
+DISCORD_CLIENT_SECRET=your_client_secret
+DISCORD_OAUTH_SCOPES=identify email guilds
+PUBLIC_BASE_URL=https://YOUR-RENDER-APP.onrender.com
+```
+
+`DISCORD_REDIRECT_URI` is optional. If unset, the app uses:
+
+```text
+PUBLIC_BASE_URL/auth/discord/callback
+```
+
+### 3. How it works in this app
+
+- The login screen calls `/api/oauth/config` to see whether OAuth2 is configured.
+- The **Continue with Discord OAuth2** button redirects to `/auth/discord/login`.
+- Flask creates a CSRF `state` cookie and redirects to Discord.
+- Discord redirects back to `/auth/discord/callback` with a temporary `code`.
+- Flask validates `state`, exchanges the code at Discord's `/oauth2/token`, then redirects back to the frontend.
+- The frontend uses the OAuth2 Bearer token only for safe OAuth2 endpoints like `/users/@me` and `/users/@me/guilds`.
+
+### OAuth2 limitations
+
+OAuth2 is not the same as a personal account token. It can safely identify the user and list guilds granted by scopes, but it does not let this app read private messages or act as the user's Discord client. For server/channel/message bot features, use the bot-token login.
+
+## Personal account tokens
+
+Personal Discord account/user tokens are intentionally not supported. Using a user token for automated API access is unsafe, can compromise the account, and violates Discord's platform rules. This is why the project uses Discord OAuth2 instead of asking users to paste account tokens. Use one of these supported options instead:
+
+- **Bot token:** best for this app's server/channel/message features.
+- **Discord OAuth2:** best if you only need a user to sign in and share basic profile/guild information through Discord's official authorization flow.
+
+OAuth2 sign-in is implemented in this project through the Flask backend routes `/auth/discord/login` and `/auth/discord/callback`.
 
 ## Notes and limitations
 

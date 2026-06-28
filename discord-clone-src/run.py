@@ -11,15 +11,19 @@ and run the Vite build before the server starts. This makes `python run.py` and
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
 import sys
+import secrets
+import time
+from urllib.parse import urlencode
 from pathlib import Path
 from typing import Iterable
 
 import requests
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, make_response, redirect, request, send_from_directory
 from flask_cors import CORS
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -35,6 +39,11 @@ NODEENV_BIN = NODEENV_DIR / ("Scripts" if os.name == "nt" else "bin")
 LOCAL_NPM = NODEENV_BIN / ("npm.cmd" if os.name == "nt" else "npm")
 
 DISCORD_API_BASE = os.environ.get("DISCORD_API_BASE", "https://discord.com/api/v10").rstrip("/")
+DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "").strip()
+DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "").strip()
+DISCORD_OAUTH_SCOPES = os.environ.get("DISCORD_OAUTH_SCOPES", "identify email guilds").strip()
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+OAUTH_STATE_MAX_AGE = int(os.environ.get("OAUTH_STATE_MAX_AGE", "600"))
 REQUEST_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "30"))
 AUTO_BUILD_FRONTEND = os.environ.get("AUTO_BUILD_FRONTEND", "1").strip().lower() not in {
     "0",
@@ -44,6 +53,60 @@ AUTO_BUILD_FRONTEND = os.environ.get("AUTO_BUILD_FRONTEND", "1").strip().lower()
 }
 
 _build_error: str | None = None
+
+
+def _external_base_url() -> str:
+    if PUBLIC_BASE_URL:
+        return PUBLIC_BASE_URL
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", request.scheme)
+    forwarded_host = request.headers.get("X-Forwarded-Host", request.host)
+    return f"{forwarded_proto}://{forwarded_host}"
+
+
+def _oauth_redirect_uri() -> str:
+    configured = os.environ.get("DISCORD_REDIRECT_URI", "").strip()
+    if configured:
+        return configured
+    return f"{_external_base_url()}/auth/discord/callback"
+
+
+def _oauth_configured() -> bool:
+    return bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET)
+
+
+def _encode_oauth_token(access_token: str) -> str:
+    return base64.urlsafe_b64encode(access_token.encode("utf-8")).decode("ascii")
+
+
+def _decode_oauth_token(encoded: str) -> str:
+    return base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8")
+
+
+def _make_state_cookie(state: str):
+    response = make_response()
+    response.set_cookie(
+        "discord_oauth_state",
+        state,
+        max_age=OAUTH_STATE_MAX_AGE,
+        httponly=True,
+        secure=request.headers.get("X-Forwarded-Proto", request.scheme) == "https",
+        samesite="Lax",
+    )
+    response.set_cookie(
+        "discord_oauth_state_ts",
+        str(int(time.time())),
+        max_age=OAUTH_STATE_MAX_AGE,
+        httponly=True,
+        secure=request.headers.get("X-Forwarded-Proto", request.scheme) == "https",
+        samesite="Lax",
+    )
+    return response
+
+
+def _clear_state_cookies(response):
+    response.delete_cookie("discord_oauth_state")
+    response.delete_cookie("discord_oauth_state_ts")
+    return response
 
 
 def _cors_origins() -> str | list[str]:
@@ -124,11 +187,15 @@ def _ensure_npm() -> str:
     return npm
 
 
-def ensure_frontend_build() -> None:
-    """Build the Vite frontend automatically when dist/index.html is missing."""
+def ensure_frontend_build(force: bool = False) -> None:
+    """Build the Vite frontend automatically when dist/index.html is missing.
+
+    Pass force=True for deployment/build commands so dist always reflects the
+    current source files.
+    """
     global _build_error
 
-    if INDEX_FILE.exists():
+    if INDEX_FILE.exists() and not force:
         return
 
     if not AUTO_BUILD_FRONTEND:
@@ -246,6 +313,85 @@ def healthz() -> tuple[dict[str, str | bool | None], int]:
     }, 200
 
 
+@app.get("/api/oauth/config")
+def oauth_config() -> tuple[dict[str, str | bool], int]:
+    return {
+        "enabled": _oauth_configured(),
+        "clientId": DISCORD_CLIENT_ID,
+        "scopes": DISCORD_OAUTH_SCOPES,
+        "redirectUri": _oauth_redirect_uri(),
+    }, 200
+
+
+@app.get("/auth/discord/login")
+def discord_oauth_login():
+    if not _oauth_configured():
+        return (
+            "Discord OAuth2 is not configured. Set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET.",
+            503,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
+
+    state = secrets.token_urlsafe(32)
+    params = {
+        "response_type": "code",
+        "client_id": DISCORD_CLIENT_ID,
+        "scope": DISCORD_OAUTH_SCOPES,
+        "state": state,
+        "redirect_uri": _oauth_redirect_uri(),
+        "prompt": request.args.get("prompt", "consent"),
+    }
+    response = _make_state_cookie(state)
+    response.headers["Location"] = f"https://discord.com/oauth2/authorize?{urlencode(params)}"
+    response.status_code = 302
+    return response
+
+
+@app.get("/auth/discord/callback")
+def discord_oauth_callback():
+    error = request.args.get("error")
+    if error:
+        response = redirect(f"/?oauth_error={error}")
+        return _clear_state_cookies(response)
+
+    code = request.args.get("code")
+    state = request.args.get("state")
+    saved_state = request.cookies.get("discord_oauth_state")
+    saved_ts = request.cookies.get("discord_oauth_state_ts", "0")
+
+    try:
+        state_age = int(time.time()) - int(saved_ts)
+    except ValueError:
+        state_age = OAUTH_STATE_MAX_AGE + 1
+
+    if not code or not state or not saved_state or not secrets.compare_digest(state, saved_state) or state_age > OAUTH_STATE_MAX_AGE:
+        response = redirect("/?oauth_error=invalid_state")
+        return _clear_state_cookies(response)
+
+    try:
+        token_response = requests.post(
+            f"{DISCORD_API_BASE}/oauth2/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": _oauth_redirect_uri(),
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            auth=(DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET),
+            timeout=REQUEST_TIMEOUT,
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        access_token = token_data["access_token"]
+    except Exception as exc:
+        response = redirect(f"/?oauth_error=token_exchange_failed")
+        print(f"[oauth] token exchange failed: {exc}", file=sys.stderr, flush=True)
+        return _clear_state_cookies(response)
+
+    response = redirect(f"/?oauth_token={_encode_oauth_token(access_token)}")
+    return _clear_state_cookies(response)
+
+
 @app.route("/api/discord/<path:endpoint>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 def discord_proxy(endpoint: str) -> Response:
     """Forward same-origin frontend requests to Discord's REST API."""
@@ -298,7 +444,7 @@ def serve_spa(path: str):
 
 if __name__ == "__main__":
     if "--build-only" in sys.argv:
-        ensure_frontend_build()
+        ensure_frontend_build(force=True)
         if INDEX_FILE.exists() and _build_error is None:
             print("[startup] Build-only check completed successfully.", flush=True)
             raise SystemExit(0)

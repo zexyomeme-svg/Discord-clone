@@ -11,6 +11,7 @@ import MemberList from './components/MemberList';
 import UserPanel from './components/UserPanel';
 import SettingsModal from './components/SettingsModal';
 import ErrorNotification from './components/ErrorNotification';
+import OAuthDashboard from './components/OAuthDashboard';
 
 function MainLayout() {
   const { viewMode } = useStore();
@@ -41,14 +42,45 @@ function MainLayout() {
   );
 }
 
+function decodeOAuthRedirectToken(value: string) {
+  try {
+    return atob(value.replace(/-/g, '+').replace(/_/g, '/'));
+  } catch {
+    return value;
+  }
+}
+
 export default function App() {
-  const { token, user, isLoading, login } = useStore();
+  const { token, authMode, user, isLoading, login, loginWithOAuth } = useStore();
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthToken = params.get('oauth_token');
+    const oauthError = params.get('oauth_error');
+
+    if (oauthToken) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      loginWithOAuth(decodeOAuthRedirectToken(oauthToken)).catch(() => {
+        localStorage.removeItem('discord_oauth_access_token');
+        localStorage.removeItem('discord_auth_mode');
+        useStore.setState({ token: null, authMode: 'bot' });
+      });
+      return;
+    }
+
+    if (oauthError) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      useStore.setState({ error: `Discord OAuth2 failed: ${oauthError}` });
+      return;
+    }
+
     if (token && !user && !isLoading) {
-      login(token).catch(() => {
+      const restore = authMode === 'oauth' ? loginWithOAuth : login;
+      restore(token).catch(() => {
         localStorage.removeItem('discord_token');
-        useStore.setState({ token: null });
+        localStorage.removeItem('discord_oauth_access_token');
+        localStorage.removeItem('discord_auth_mode');
+        useStore.setState({ token: null, authMode: 'bot' });
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65,6 +97,10 @@ export default function App() {
 
   if (isLoading || !user) {
     return <div className="h-full w-full"><LoadingScreen /></div>;
+  }
+
+  if (authMode === 'oauth') {
+    return <OAuthDashboard />;
   }
 
   return <MainLayout />;

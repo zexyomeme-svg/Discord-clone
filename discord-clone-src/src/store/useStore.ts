@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { DiscordUser, Guild, Channel, Message, GuildMember, Role, TypingUser, ViewMode, SettingsPage, UserSettings } from './types';
+import type { DiscordUser, Guild, Channel, Message, GuildMember, Role, TypingUser, ViewMode, SettingsPage, UserSettings, AuthMode } from './types';
 import * as api from '../services/discordApi';
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -23,6 +23,7 @@ function loadSettings(): UserSettings {
 
 interface AppState {
   token: string | null;
+  authMode: AuthMode;
   user: DiscordUser | null;
   isLoading: boolean;
   error: string | null;
@@ -55,6 +56,7 @@ interface AppState {
 
   // Actions
   login: (token: string) => Promise<void>;
+  loginWithOAuth: (accessToken: string) => Promise<void>;
   logout: () => void;
   setViewMode: (mode: ViewMode) => void;
   selectGuild: (guildId: string) => Promise<void>;
@@ -75,7 +77,8 @@ interface AppState {
 }
 
 const useStore = create<AppState>((set, get) => ({
-  token: localStorage.getItem('discord_token'),
+  token: localStorage.getItem('discord_oauth_access_token') || localStorage.getItem('discord_token'),
+  authMode: (localStorage.getItem('discord_auth_mode') as AuthMode) || (localStorage.getItem('discord_oauth_access_token') ? 'oauth' : 'bot'),
   user: null,
   isLoading: false,
   error: null,
@@ -154,10 +157,47 @@ const useStore = create<AppState>((set, get) => ({
     }
   },
 
+  loginWithOAuth: async (accessToken: string) => {
+    const cleanToken = accessToken.trim().replace(/^Bearer\s+/i, '');
+    set({ isLoading: true, error: null, isConnecting: false });
+    try {
+      const user = await api.getCurrentUser(cleanToken, 'oauth');
+      if (!user || !user.id) throw new Error('Invalid OAuth2 access token');
+      const guilds = await api.getGuilds(cleanToken, 'oauth');
+      localStorage.setItem('discord_oauth_access_token', cleanToken);
+      localStorage.setItem('discord_auth_mode', 'oauth');
+      localStorage.removeItem('discord_token');
+      set({
+        token: cleanToken,
+        authMode: 'oauth',
+        user,
+        guilds: guilds || [],
+        dmChannels: [],
+        channels: {},
+        messages: {},
+        members: {},
+        roles: {},
+        selectedGuildId: null,
+        selectedChannelId: null,
+        viewMode: 'servers',
+        isLoading: false,
+        isConnecting: false,
+        gateway: null,
+      });
+    } catch (err: any) {
+      localStorage.removeItem('discord_oauth_access_token');
+      localStorage.removeItem('discord_auth_mode');
+      set({ isLoading: false, isConnecting: false, error: err.message || 'Failed to complete Discord OAuth2 login' });
+      throw err;
+    }
+  },
+
   logout: () => {
     get().gateway?.close();
     localStorage.removeItem('discord_token');
-    set({ token: null, user: null, guilds: [], channels: {}, messages: {}, members: {}, roles: {}, dmChannels: [], selectedGuildId: null, selectedChannelId: null, gateway: null, settingsOpen: false });
+    localStorage.removeItem('discord_oauth_access_token');
+    localStorage.removeItem('discord_auth_mode');
+    set({ token: null, authMode: 'bot', user: null, guilds: [], channels: {}, messages: {}, members: {}, roles: {}, dmChannels: [], selectedGuildId: null, selectedChannelId: null, gateway: null, settingsOpen: false });
   },
 
   setViewMode: (mode: ViewMode) => set({ viewMode: mode }),

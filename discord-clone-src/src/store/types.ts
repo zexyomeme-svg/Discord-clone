@@ -126,6 +126,8 @@ export interface TypingUser {
 
 export type ViewMode = 'servers' | 'dms';
 
+export type AuthMode = 'bot' | 'oauth';
+
 export type SettingsPage =
   | 'my-account'
   | 'profiles'
