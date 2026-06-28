@@ -113,6 +113,7 @@ Create a new Render **Web Service** with these settings:
 | `NODE_VERSION` | `20.20.2` | Node.js version for the local `nodeenv` fallback when system npm is unavailable. |
 | `NODEENV_DIR` | `.nodeenv` | Directory for the local Node.js runtime installed by `nodeenv`. |
 | `NPM_BINARY` | unset | Optional explicit path/name for npm. |
+| `DISCORD_USER_AGENT` | `DiscordBot (https://arena.ai, 1.0)` | Bot-style User-Agent used by the Flask Discord API proxy. Do not use a browser User-Agent. |
 
 ## Login / token format
 
@@ -141,6 +142,16 @@ Discord requires the bot to have the right server/channel permissions. At minimu
 To receive live gateway message events and full message content, enable the **Message Content Intent** in the Discord Developer Portal under **Bot → Privileged Gateway Intents**. The app requests Gateway intents for guilds, guild members, guild messages, direct messages, and message content. Without the Message Content intent, Discord may return message objects but hide message text/content in some situations.
 
 Discord message content has a 2000 character limit for normal messages. The frontend validates this before sending.
+
+### Discord `internal network error` / code `40333`
+
+If Discord returns:
+
+```json
+{"message":"internal network error","code":40333}
+```
+
+that usually is not a normal missing-permission error. Discord/Cloudflare can return this response when Bot API requests look like browser traffic. The Flask proxy now intentionally **does not forward the browser User-Agent** and instead sends a bot-style `DISCORD_USER_AGENT`. If this still happens, the hosting provider's shared IP may be blocked by Discord/Cloudflare; try a different host or a VPS/static IP.
 
 OAuth2 login can show the signed-in user and guild list, but OAuth2 user tokens from the official flow cannot be used to act like the Discord client, read arbitrary private messages, or send messages as the user. Use bot-token mode for loading and sending channel messages.
 

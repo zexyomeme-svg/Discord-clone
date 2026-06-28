@@ -234,9 +234,11 @@ def ensure_frontend_build(force: bool = False) -> None:
         print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
 
 
-# Build during import as well as when running `python run.py`; this is important
-# for `gunicorn run:app`, where the __main__ block is not executed.
-ensure_frontend_build()
+# Build during import for `gunicorn run:app`, where the __main__ block is not
+# executed. Skip here for `python run.py --build-only` so it does one forced
+# build in the __main__ block instead of building twice.
+if "--build-only" not in sys.argv:
+    ensure_frontend_build()
 
 app = Flask(__name__, static_folder=None)
 CORS(app, resources={r"/api/*": {"origins": _cors_origins()}})
@@ -254,12 +256,16 @@ HOP_BY_HOP_HEADERS: set[str] = {
     "content-length",
 }
 
+DISCORD_USER_AGENT = os.environ.get(
+    "DISCORD_USER_AGENT",
+    "DiscordBot (https://arena.ai, 1.0)",
+)
+
 FORWARDED_REQUEST_HEADERS: set[str] = {
     "authorization",
     "content-type",
     "accept",
     "accept-language",
-    "user-agent",
     "x-audit-log-reason",
 }
 
@@ -288,8 +294,11 @@ def _select_request_headers() -> dict[str, str]:
         if lowered in FORWARDED_REQUEST_HEADERS:
             headers[name] = value
 
-    headers.setdefault("Accept", "application/json")
-    headers.setdefault("User-Agent", "discord-clone-render/1.0")
+    # Do not forward the browser's User-Agent. Discord/Cloudflare can block Bot API
+    # calls that look like they came from a normal browser and return
+    # {"message":"internal network error","code":40333}. Use a bot-style UA.
+    headers["Accept"] = headers.get("Accept", "application/json")
+    headers["User-Agent"] = DISCORD_USER_AGENT
     return headers
 
 

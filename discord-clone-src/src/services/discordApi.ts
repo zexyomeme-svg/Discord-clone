@@ -63,6 +63,9 @@ async function apiRequest(endpoint: string, token: string, options: RequestInit 
     throw new Error(mode === 'oauth' ? 'Discord OAuth2 session expired. Please log in again.' : 'Invalid bot token. Personal account/user tokens are not supported.');
   }
   if (res.status === 403) {
+    if (typeof data === 'object' && data?.code === 40333) {
+      throw new Error('Discord blocked the API request with code 40333 (internal network error). The server proxy now strips browser User-Agent headers; if this persists, the hosting provider IP may be blocked by Discord/Cloudflare.');
+    }
     const detail = typeof data === 'object' && data?.message ? ` Discord says: ${data.message}.` : '';
     throw new Error(`Forbidden.${detail} Check that the bot has View Channel, Read Message History, and Send Messages permissions for this channel.`);
   }
