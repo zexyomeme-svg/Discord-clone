@@ -234,7 +234,19 @@ function decodeOAuthRedirectToken(value: string) {
 }
 
 export default function App() {
-  const { token, authMode, user, isLoading, login, loginWithOAuth } = useStore();
+  const { token, authMode, user, isLoading, login, loginWithOAuth, userSettings } = useStore();
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('theme-light', userSettings.theme === 'light');
+    root.classList.toggle('theme-dark', userSettings.theme === 'dark');
+    root.classList.toggle('reduced-motion', userSettings.reducedMotion);
+    root.classList.toggle('high-contrast', userSettings.highContrast);
+    root.classList.toggle('streamer-mode', userSettings.streamerMode);
+    root.classList.toggle('compact-mode', userSettings.compactMode);
+    root.style.setProperty('--app-saturation', `${userSettings.saturation}%`);
+    document.body.style.filter = `saturate(${userSettings.saturation}%)`;
+  }, [userSettings]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

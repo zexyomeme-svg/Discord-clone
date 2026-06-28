@@ -11,6 +11,17 @@ const DEFAULT_SETTINGS: UserSettings = {
   saturation: 100,
   isMuted: false,
   isDeafened: false,
+  desktopNotifications: false,
+  unreadBadge: true,
+  messageSound: true,
+  notificationSounds: true,
+  streamerMode: false,
+  developerMode: false,
+  reducedMotion: false,
+  highContrast: false,
+  language: 'en-US',
+  inputDevice: 'default',
+  outputDevice: 'default',
 };
 
 

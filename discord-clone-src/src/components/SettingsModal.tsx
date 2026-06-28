@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, User, Shield, Palette, Bell, Keyboard, Accessibility, MonitorSpeaker, Globe, Zap, Link2, AppWindow, LogOut, ChevronRight } from 'lucide-react';
+import { X, User, Shield, Palette, Bell, Keyboard, Accessibility, MonitorSpeaker, Globe, Zap, Link2, AppWindow, LogOut, ChevronRight, Copy } from 'lucide-react';
 import useStore from '../store/useStore';
 import { getUserAvatarUrl } from '../services/discordApi';
-import type { SettingsPage } from '../store/types';
+import type { SettingsPage, UserSettings } from '../store/types';
 
 interface NavItem {
   id: SettingsPage;
@@ -43,6 +43,30 @@ function SidebarNav({ items, section, current, onSelect }: { items: NavItem[]; s
       ))}
     </div>
   );
+}
+
+
+function SettingsToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+  return (
+    <button onClick={onToggle}
+      className={`w-10 h-6 rounded-full transition-colors relative ${enabled ? 'bg-discord-green' : 'bg-discord-input'}`}>
+      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`} />
+    </button>
+  );
+}
+
+function SettingsRow({ label, desc, enabled, onToggle }: { label: string; desc?: string; enabled: boolean; onToggle: () => void }) {
+  return (
+    <div className="flex items-center justify-between py-3 gap-4">
+      <div><p className="text-sm font-medium text-discord-text">{label}</p>{desc && <p className="text-xs text-discord-text-muted mt-0.5">{desc}</p>}</div>
+      <SettingsToggle enabled={enabled} onToggle={onToggle} />
+    </div>
+  );
+}
+
+function copyToClipboard(value: string, setError: (error: string | null) => void) {
+  navigator.clipboard?.writeText(value);
+  setError('Copied to clipboard.');
 }
 
 // ---- Content Pages ----
@@ -114,6 +138,9 @@ function MyAccountPage() {
 
 function ProfilesPage() {
   const { user, setError } = useStore();
+  const [displayName, setDisplayName] = useState(user?.global_name || user?.username || '');
+  const [bannerColor, setBannerColor] = useState(user?.accent_color ? `#${user.accent_color.toString(16).padStart(6, '0')}` : '#5865f2');
+  const [bio, setBio] = useState(user?.bio || '');
   if (!user) return null;
   const avatarUrl = getUserAvatarUrl(user.id, user.avatar, user.discriminator);
 
@@ -125,7 +152,7 @@ function ProfilesPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-discord-text-muted uppercase tracking-wide mb-2">Display Name</label>
-              <input type="text" defaultValue={user.global_name || user.username}
+              <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)}
                 className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark focus:border-discord-blurple outline-none transition-colors" />
             </div>
             <div>
@@ -142,17 +169,18 @@ function ProfilesPage() {
             <div>
               <label className="block text-xs font-bold text-discord-text-muted uppercase tracking-wide mb-2">Banner Color</label>
               <div className="flex items-center gap-3">
-                <div className="w-16 h-16 rounded-lg" style={{ backgroundColor: user.accent_color ? `#${user.accent_color.toString(16).padStart(6, '0')}` : '#5865f2' }} />
-                <input type="text" defaultValue={user.accent_color ? `#${user.accent_color.toString(16).padStart(6, '0')}` : '#5865f2'}
+                <div className="w-16 h-16 rounded-lg" style={{ backgroundColor: bannerColor }} />
+                <input type="text" value={bannerColor} onChange={(e) => setBannerColor(e.target.value)}
                   className="bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark focus:border-discord-blurple outline-none w-28" />
               </div>
             </div>
             <div>
               <label className="block text-xs font-bold text-discord-text-muted uppercase tracking-wide mb-2">About Me</label>
-              <textarea defaultValue={user.bio || ''} placeholder="Tell the world about yourself"
+              <textarea value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Tell the world about yourself"
                 className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark focus:border-discord-blurple outline-none resize-none h-24" />
               <p className="text-xs text-discord-text-muted mt-1">You can use markdown and links.</p>
             </div>
+            <button onClick={() => setError('Profile preview saved locally for this settings session. Discord profile updates must be made in Discord.')} className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">Save Preview</button>
           </div>
         </div>
 
@@ -160,16 +188,16 @@ function ProfilesPage() {
         <div className="w-[280px] flex-shrink-0">
           <p className="text-xs font-bold text-discord-text-muted uppercase tracking-wide mb-2">Preview</p>
           <div className="bg-discord-popout rounded-lg overflow-hidden border border-discord-border">
-            <div className="h-[60px]" style={{ backgroundColor: user.accent_color ? `#${user.accent_color.toString(16).padStart(6, '0')}` : '#5865f2' }} />
+            <div className="h-[60px]" style={{ backgroundColor: bannerColor }} />
             <div className="px-3 pb-3 -mt-[32px]">
               <img src={avatarUrl} alt="" className="w-[64px] h-[64px] rounded-full border-[5px] border-discord-popout mb-1"
                 onError={(e) => { (e.target as HTMLImageElement).src = 'https://cdn.discordapp.com/embed/avatars/0.png'; }} />
-              <h4 className="text-lg font-bold text-white leading-tight">{user.global_name || user.username}</h4>
+              <h4 className="text-lg font-bold text-white leading-tight">{displayName || user.username}</h4>
               <p className="text-sm text-discord-text-muted">{user.username}</p>
-              {user.bio && (
+              {bio && (
                 <div className="mt-2 pt-2 border-t border-discord-border">
                   <p className="text-xs font-bold text-discord-text-muted uppercase mb-1">About Me</p>
-                  <p className="text-sm text-discord-text">{user.bio}</p>
+                  <p className="text-sm text-discord-text">{bio}</p>
                 </div>
               )}
             </div>
@@ -357,102 +385,147 @@ function AccessibilityPage() {
   );
 }
 
-function GenericPage({ title, desc }: { title: string; desc: string }) {
+function GenericPage({ title, desc, children }: { title: string; desc: string; children?: React.ReactNode }) {
   return (
     <div className="animate-fade-in-fast">
       <h2 className="text-xl font-bold text-white mb-3">{title}</h2>
       <p className="text-sm text-discord-text-muted">{desc}</p>
-      <div className="mt-6 p-6 bg-discord-dark rounded-lg text-center">
-        <p className="text-discord-text-muted text-sm">This section is available when connected to a live Discord session.</p>
-      </div>
+      <div className="mt-6">{children}</div>
     </div>
+  );
+}
+
+function PrivacyPage() {
+  const { userSettings, updateSettings } = useStore();
+  return (
+    <GenericPage title="Privacy & Safety" desc="Control local privacy-related display preferences.">
+      <div className="bg-discord-dark rounded-lg p-4 space-y-1">
+        <SettingsRow label="Streamer Mode" desc="Hide sensitive profile details in local UI." enabled={userSettings.streamerMode} onToggle={() => updateSettings({ streamerMode: !userSettings.streamerMode })} />
+        <SettingsRow label="Developer Mode" desc="Show IDs and technical information where available." enabled={userSettings.developerMode} onToggle={() => updateSettings({ developerMode: !userSettings.developerMode })} />
+      </div>
+    </GenericPage>
+  );
+}
+
+function AuthorizedAppsPage() {
+  const { authMode } = useStore();
+  return (
+    <GenericPage title="Authorized Apps" desc="Review the current connection mode.">
+      <div className="bg-discord-dark rounded-lg p-4">
+        <p className="text-sm text-discord-text">Current auth mode: <strong>{authMode === 'oauth' ? 'Discord OAuth2' : 'Bot Token'}</strong></p>
+        <p className="text-xs text-discord-text-muted mt-2">Manage Discord-authorized apps in Discord User Settings. Bot-token sessions can be ended with Log Out.</p>
+      </div>
+    </GenericPage>
+  );
+}
+
+function ConnectionsPage() {
+  return (
+    <GenericPage title="Connections" desc="Connect this deployment to Discord through bot tokens or OAuth2.">
+      <div className="bg-discord-dark rounded-lg p-4 space-y-2 text-sm text-discord-text-muted">
+        <p>Bot token mode powers server channels, messages, uploads, and reactions.</p>
+        <p>OAuth2 mode powers safe user sign-in and guild listing.</p>
+      </div>
+    </GenericPage>
+  );
+}
+
+function LanguagePage() {
+  const { userSettings, updateSettings } = useStore();
+  const languages: Array<{ value: UserSettings['language']; label: string }> = [
+    { value: 'en-US', label: 'English, US' },
+    { value: 'en-GB', label: 'English, UK' },
+    { value: 'es-ES', label: 'Español' },
+    { value: 'fr-FR', label: 'Français' },
+    { value: 'de-DE', label: 'Deutsch' },
+    { value: 'pt-BR', label: 'Português do Brasil' },
+  ];
+  return (
+    <GenericPage title="Language" desc="Select the local UI language preference.">
+      <select value={userSettings.language} onChange={(e) => updateSettings({ language: e.target.value as UserSettings['language'] })} className="w-full bg-discord-dark text-discord-text rounded px-3 py-2 outline-none">
+        {languages.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+      </select>
+      <p className="text-xs text-discord-text-muted mt-3">Full text translation is not bundled; this preference is saved for integrations and future UI text.</p>
+    </GenericPage>
+  );
+}
+
+function StreamerPage() {
+  const { userSettings, updateSettings } = useStore();
+  return (
+    <GenericPage title="Streamer Mode" desc="Hide sensitive information while streaming.">
+      <div className="bg-discord-dark rounded-lg p-4">
+        <SettingsRow label="Enable Streamer Mode" desc="Masks sensitive profile fields locally." enabled={userSettings.streamerMode} onToggle={() => updateSettings({ streamerMode: !userSettings.streamerMode })} />
+      </div>
+    </GenericPage>
   );
 }
 
 function NotificationsPage() {
+  const { userSettings, updateSettings, setError } = useStore();
+  const requestNotifications = async () => {
+    if (!('Notification' in window)) {
+      setError('This browser does not support desktop notifications.');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    updateSettings({ desktopNotifications: permission === 'granted' });
+    setError(permission === 'granted' ? 'Desktop notifications enabled.' : 'Desktop notifications were not granted.');
+  };
   return (
     <div className="animate-fade-in-fast">
       <h2 className="text-xl font-bold text-white mb-5">Notifications</h2>
-      <div className="space-y-4">
-        {[
-          { label: 'Enable Desktop Notifications', desc: 'Show browser notifications for new messages', default: true },
-          { label: 'Enable Unread Message Badge', desc: 'Show a badge on the app icon when you have unread messages', default: true },
-          { label: 'Enable Message Sound', desc: 'Play a sound when you receive a message', default: true },
-          { label: 'Notification Sounds', desc: 'Play sound effects for various events like joining/leaving calls', default: true },
-        ].map(item => (
-          <ToggleRow key={item.label} label={item.label} desc={item.desc} defaultVal={item.default} />
-        ))}
+      <div className="space-y-2">
+        <SettingsRow label="Enable Desktop Notifications" desc="Ask the browser for permission and save the preference." enabled={userSettings.desktopNotifications} onToggle={() => userSettings.desktopNotifications ? updateSettings({ desktopNotifications: false }) : requestNotifications()} />
+        <SettingsRow label="Enable Unread Message Badge" desc="Show unread state in the app UI." enabled={userSettings.unreadBadge} onToggle={() => updateSettings({ unreadBadge: !userSettings.unreadBadge })} />
+        <SettingsRow label="Enable Message Sound" desc="Play a short sound when sending/receiving messages where supported." enabled={userSettings.messageSound} onToggle={() => updateSettings({ messageSound: !userSettings.messageSound })} />
+        <SettingsRow label="Notification Sounds" desc="Play sound effects for app events." enabled={userSettings.notificationSounds} onToggle={() => updateSettings({ notificationSounds: !userSettings.notificationSounds })} />
       </div>
-    </div>
-  );
-}
-
-function ToggleRow({ label, desc, defaultVal }: { label: string; desc: string; defaultVal: boolean }) {
-  const [enabled, setEnabled] = useState(defaultVal);
-  return (
-    <div className="flex items-center justify-between py-2">
-      <div><p className="text-sm font-medium text-discord-text">{label}</p><p className="text-xs text-discord-text-muted mt-0.5">{desc}</p></div>
-      <button onClick={() => setEnabled(!enabled)}
-        className={`w-10 h-6 rounded-full transition-colors relative ${enabled ? 'bg-discord-green' : 'bg-discord-input'}`}>
-        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`} />
-      </button>
     </div>
   );
 }
 
 function VoicePage() {
   const { userSettings, updateSettings } = useStore();
+  const devices = ['default', 'communications', 'external microphone', 'headset'];
   return (
     <div className="animate-fade-in-fast">
       <h2 className="text-xl font-bold text-white mb-5">Voice & Video</h2>
-      <div className="grid grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <div>
           <label className="block text-xs font-bold text-discord-text-muted uppercase tracking-wide mb-2">Input Device</label>
-          <select className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark outline-none">
-            <option>Default</option>
+          <select value={userSettings.inputDevice} onChange={(e) => updateSettings({ inputDevice: e.target.value })} className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark outline-none">
+            {devices.map(d => <option key={d} value={d}>{d === 'default' ? 'Default' : d}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-xs font-bold text-discord-text-muted uppercase tracking-wide mb-2">Output Device</label>
-          <select className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark outline-none">
-            <option>Default</option>
+          <select value={userSettings.outputDevice} onChange={(e) => updateSettings({ outputDevice: e.target.value })} className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark outline-none">
+            {devices.map(d => <option key={d} value={d}>{d === 'default' ? 'Default' : d}</option>)}
           </select>
         </div>
       </div>
-      <div className="flex items-center justify-between py-3">
-        <div><p className="text-sm font-medium text-discord-text">Mute</p></div>
-        <button onClick={() => updateSettings({ isMuted: !userSettings.isMuted })}
-          className={`w-10 h-6 rounded-full transition-colors relative ${userSettings.isMuted ? 'bg-discord-green' : 'bg-discord-input'}`}>
-          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${userSettings.isMuted ? 'translate-x-5' : 'translate-x-1'}`} />
-        </button>
-      </div>
-      <div className="flex items-center justify-between py-3">
-        <div><p className="text-sm font-medium text-discord-text">Deafen</p></div>
-        <button onClick={() => updateSettings({ isDeafened: !userSettings.isDeafened })}
-          className={`w-10 h-6 rounded-full transition-colors relative ${userSettings.isDeafened ? 'bg-discord-green' : 'bg-discord-input'}`}>
-          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${userSettings.isDeafened ? 'translate-x-5' : 'translate-x-1'}`} />
-        </button>
-      </div>
+      <SettingsRow label="Mute" enabled={userSettings.isMuted} onToggle={() => updateSettings({ isMuted: !userSettings.isMuted })} />
+      <SettingsRow label="Deafen" enabled={userSettings.isDeafened} onToggle={() => updateSettings({ isDeafened: !userSettings.isDeafened })} />
     </div>
   );
 }
 
 function KeybindsPage() {
-  const { setError } = useStore();
+  const { updateSettings, userSettings, setError } = useStore();
   const binds = [
-    { action: 'Toggle Mute', keys: 'Ctrl + Shift + M' },
-    { action: 'Toggle Deafen', keys: 'Ctrl + Shift + D' },
-    { action: 'Search', keys: 'Ctrl + K' },
-    { action: 'Mark as Read', keys: 'Escape' },
-    { action: 'Scroll to Bottom', keys: 'Shift + Escape' },
-    { action: 'Upload File', keys: 'Ctrl + Shift + U' },
+    { action: 'Toggle Mute', keys: 'Ctrl + Shift + M', run: () => updateSettings({ isMuted: !userSettings.isMuted }) },
+    { action: 'Toggle Deafen', keys: 'Ctrl + Shift + D', run: () => updateSettings({ isDeafened: !userSettings.isDeafened }) },
+    { action: 'Open Search', keys: 'Ctrl + K', run: () => setError('Use the channel/DM search boxes in the current panel.') },
+    { action: 'Close Settings', keys: 'Escape', run: () => setError('Press Escape while settings are open to close settings.') },
+    { action: 'Upload File', keys: 'Ctrl + Shift + U', run: () => setError('Use the + button next to the message box to upload files.') },
   ];
   return (
     <div className="animate-fade-in-fast">
       <h2 className="text-xl font-bold text-white mb-5">Keybinds</h2>
       <div className="space-y-2">
         {binds.map(b => (
-          <div key={b.action} className="flex items-center justify-between p-3 bg-discord-dark rounded-lg hover:bg-discord-hover transition-colors">
+          <button key={b.action} onClick={b.run} className="w-full flex items-center justify-between p-3 bg-discord-dark rounded-lg hover:bg-discord-hover transition-colors text-left">
             <span className="text-sm text-discord-text">{b.action}</span>
             <div className="flex items-center gap-1">
               {b.keys.split(' + ').map((k, i) => (
@@ -461,38 +534,38 @@ function KeybindsPage() {
                   <kbd className="px-2 py-1 bg-discord-sidebar rounded text-xs text-discord-text border border-discord-border font-mono">{k}</kbd>
                 </span>
               ))}
-              <button onClick={() => setError('Editing keybinds is not implemented yet.')} className="ml-3 text-discord-text-muted hover:text-white transition-colors"><ChevronRight size={14} /></button>
+              <ChevronRight size={14} className="ml-3 text-discord-text-muted" />
             </div>
-          </div>
+          </button>
         ))}
       </div>
-      <button onClick={() => setError('Adding keybinds is not implemented yet.')} className="mt-4 px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">
-        Add a Keybind
-      </button>
     </div>
   );
 }
 
 function AdvancedPage() {
-  const { user } = useStore();
+  const { user, userSettings, updateSettings, setError } = useStore();
   return (
     <div className="animate-fade-in-fast">
       <h2 className="text-xl font-bold text-white mb-5">Advanced</h2>
       <div className="space-y-4">
         <div className="p-4 bg-discord-dark rounded-lg">
-          <p className="text-xs text-discord-text-muted uppercase font-bold mb-1">User ID</p>
-          <p className="text-sm text-discord-text font-mono select-all">{user?.id || 'N/A'}</p>
+          <div className="flex items-center justify-between">
+            <div><p className="text-xs text-discord-text-muted uppercase font-bold mb-1">User ID</p><p className="text-sm text-discord-text font-mono select-all">{user?.id || 'N/A'}</p></div>
+            <button onClick={() => copyToClipboard(user?.id || '', setError)} className="text-discord-text-muted hover:text-white"><Copy size={16} /></button>
+          </div>
         </div>
         <div className="p-4 bg-discord-dark rounded-lg">
-          <p className="text-xs text-discord-text-muted uppercase font-bold mb-1">Client Version</p>
+          <SettingsRow label="Developer Mode" desc="Enable local developer-focused display options." enabled={userSettings.developerMode} onToggle={() => updateSettings({ developerMode: !userSettings.developerMode })} />
+          <SettingsRow label="Reduced Motion" desc="Reduce animation intensity in the local UI." enabled={userSettings.reducedMotion} onToggle={() => updateSettings({ reducedMotion: !userSettings.reducedMotion })} />
+          <SettingsRow label="High Contrast" desc="Increase contrast for selected UI elements." enabled={userSettings.highContrast} onToggle={() => updateSettings({ highContrast: !userSettings.highContrast })} />
+        </div>
+        <div className="p-4 bg-discord-dark rounded-lg space-y-2">
+          <p className="text-xs text-discord-text-muted uppercase font-bold">Client Version</p>
           <p className="text-sm text-discord-text font-mono">Disclone v1.0.0</p>
-        </div>
-        <div className="p-4 bg-discord-dark rounded-lg">
-          <p className="text-xs text-discord-text-muted uppercase font-bold mb-1">API Endpoint</p>
+          <p className="text-xs text-discord-text-muted uppercase font-bold pt-2">API Endpoint</p>
           <p className="text-sm text-discord-text font-mono select-all">https://discord.com/api/v10</p>
-        </div>
-        <div className="p-4 bg-discord-dark rounded-lg">
-          <p className="text-xs text-discord-text-muted uppercase font-bold mb-1">Gateway</p>
+          <p className="text-xs text-discord-text-muted uppercase font-bold pt-2">Gateway</p>
           <p className="text-sm text-discord-text font-mono select-all">wss://gateway.discord.gg</p>
         </div>
       </div>
@@ -511,11 +584,11 @@ function SettingsContent({ page }: { page: SettingsPage }) {
     case 'voice': return <VoicePage />;
     case 'keybinds': return <KeybindsPage />;
     case 'advanced': return <AdvancedPage />;
-    case 'privacy': return <GenericPage title="Privacy & Safety" desc="Control who can contact you, see your activity, and how your data is used." />;
-    case 'authorized-apps': return <GenericPage title="Authorized Apps" desc="These are apps that you've granted access to your account." />;
-    case 'connections': return <GenericPage title="Connections" desc="Connect your accounts from other platforms to your Discord profile." />;
-    case 'language': return <GenericPage title="Language" desc="Select the language you'd like Discord to use." />;
-    case 'streamer': return <GenericPage title="Streamer Mode" desc="Configure streamer mode to automatically hide personal information when streaming." />;
+    case 'privacy': return <PrivacyPage />;
+    case 'authorized-apps': return <AuthorizedAppsPage />;
+    case 'connections': return <ConnectionsPage />;
+    case 'language': return <LanguagePage />;
+    case 'streamer': return <StreamerPage />;
     default: return <GenericPage title="Settings" desc="Select an option from the sidebar." />;
   }
 }

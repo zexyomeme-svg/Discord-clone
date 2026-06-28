@@ -144,6 +144,7 @@ export type SettingsPage =
   | 'advanced';
 
 export type ThemeMode = 'dark' | 'light';
+export type LanguageCode = 'en-US' | 'en-GB' | 'es-ES' | 'fr-FR' | 'de-DE' | 'pt-BR';
 
 export interface UserSettings {
   theme: ThemeMode;
@@ -154,4 +155,15 @@ export interface UserSettings {
   saturation: number;
   isMuted: boolean;
   isDeafened: boolean;
+  desktopNotifications: boolean;
+  unreadBadge: boolean;
+  messageSound: boolean;
+  notificationSounds: boolean;
+  streamerMode: boolean;
+  developerMode: boolean;
+  reducedMotion: boolean;
+  highContrast: boolean;
+  language: LanguageCode;
+  inputDevice: string;
+  outputDevice: string;
 }

@@ -37,11 +37,11 @@ function DateDivider({ date }: { date: Date }) {
   return <div className="flex items-center my-6 mx-4"><div className="flex-1 h-px bg-discord-border/50" /><span className="px-2 text-[11px] text-discord-text-muted font-bold uppercase">{l}</span><div className="flex-1 h-px bg-discord-border/50" /></div>;
 }
 
-const MsgRow = memo(({ message, isGrouped, fontSize }: { message: Message; isGrouped: boolean; fontSize: number }) => {
+const MsgRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }: { message: Message; isGrouped: boolean; fontSize: number; spacing: number; compactMode: boolean }) => {
   const { token, authMode, setError } = useStore();
   const av = getUserAvatarUrl(message.author.id, message.author.avatar, message.author.discriminator);
   return (
-    <div className={`group message-hover relative flex px-4 ${isGrouped ? 'py-[2px]' : 'mt-[17px] pt-[2px]'}`}>
+    <div className={`group message-hover relative flex px-4 ${isGrouped ? 'py-[2px]' : 'pt-[2px]'}`} style={{ marginTop: isGrouped ? undefined : `${compactMode ? 4 : spacing}px` }}>
       <div className="msg-actions flex bg-discord-channel border border-discord-border rounded shadow-md">
         <button title="Add thumbs up reaction" onClick={() => { if (!token || authMode !== 'bot') return setError('Reactions require bot-token mode.'); addReaction(token, message.channel_id, message.id).catch((err) => setError(err.message || 'Failed to add reaction')); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><EmojiIcon size={18} /></button>
         <button title="Copy reply mention" onClick={() => { navigator.clipboard?.writeText(`<@${message.author.id}> `); setError('Copied reply mention to clipboard. Paste it into the message box.'); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><Reply size={18} /></button>
@@ -151,7 +151,7 @@ export default function DMMessageArea() {
               const prev = i > 0 ? msgs[i-1] : null;
               const grouped = prev ? shouldGroup(prev, msg) : false;
               const dd = !prev || !isSameDay(new Date(prev.timestamp), new Date(msg.timestamp));
-              return <div key={msg.id}>{dd && <DateDivider date={new Date(msg.timestamp)} />}<MsgRow message={msg} isGrouped={grouped && !dd} fontSize={userSettings.fontSize} /></div>;
+              return <div key={msg.id}>{dd && <DateDivider date={new Date(msg.timestamp)} />}<MsgRow message={msg} isGrouped={grouped && !dd} fontSize={userSettings.fontSize} spacing={userSettings.messageGroupSpacing} compactMode={userSettings.compactMode} /></div>;
             })}
             <div ref={endRef} className="h-[30px]" />
           </>

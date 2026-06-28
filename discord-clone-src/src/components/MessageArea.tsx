@@ -58,7 +58,7 @@ function DateDivider({ date }: { date: Date }) {
   );
 }
 
-const MessageRow = memo(({ message, isGrouped, fontSize }: { message: Message; isGrouped: boolean; fontSize: number }) => {
+const MessageRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }: { message: Message; isGrouped: boolean; fontSize: number; spacing: number; compactMode: boolean }) => {
   const { token, authMode, setError } = useStore();
   const avatarUrl = getUserAvatarUrl(message.author.id, message.author.avatar, message.author.discriminator);
   const isSys = message.type !== 0 && message.type !== 19;
@@ -73,7 +73,7 @@ const MessageRow = memo(({ message, isGrouped, fontSize }: { message: Message; i
   }
 
   return (
-    <div className={`group message-hover relative flex px-4 ${isGrouped ? 'py-[2px]' : 'mt-[17px] pt-[2px]'}`}>
+    <div className={`group message-hover relative flex px-4 ${isGrouped ? 'py-[2px]' : 'pt-[2px]'}`} style={{ marginTop: isGrouped ? undefined : `${compactMode ? 4 : spacing}px` }}>
       {/* Action bar */}
       <div className="msg-actions flex bg-discord-channel border border-discord-border rounded shadow-md">
         <button title="Add thumbs up reaction" onClick={() => { if (!token || authMode !== 'bot') return setError('Reactions require bot-token mode.'); addReaction(token, message.channel_id, message.id).catch((err) => setError(err.message || 'Failed to add reaction')); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><EmojiIcon size={18} /></button>
@@ -257,7 +257,7 @@ export default function MessageArea() {
               return (
                 <div key={msg.id}>
                   {dateDivider && <DateDivider date={new Date(msg.timestamp)} />}
-                  <MessageRow message={msg} isGrouped={grouped && !dateDivider} fontSize={userSettings.fontSize} />
+                  <MessageRow message={msg} isGrouped={grouped && !dateDivider} fontSize={userSettings.fontSize} spacing={userSettings.messageGroupSpacing} compactMode={userSettings.compactMode} />
                 </div>
               );
             })}

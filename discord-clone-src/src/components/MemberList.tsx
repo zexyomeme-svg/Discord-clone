@@ -27,7 +27,7 @@ const MemberItem = memo(({ member, roleColor, onClick }: { member: GuildMember; 
 });
 
 export default function MemberList() {
-  const { selectedGuildId, members, roles, showMemberList, setError } = useStore();
+  const { selectedGuildId, members, roles, showMemberList, userSettings, setError } = useStore();
   if (!showMemberList) return null;
 
   const gMembers = selectedGuildId ? members[selectedGuildId] || [] : [];
@@ -45,7 +45,7 @@ export default function MemberList() {
   if (rest.length) groups.push({ role: null, members: rest });
 
   function getColor(m: GuildMember) {
-    if (!m.roles?.length) return '#99aab5';
+    if (!userSettings.showRoleColors || !m.roles?.length) return '#99aab5';
     const colorRoles = gRoles.filter(r => m.roles.includes(r.id) && r.color !== 0).sort((a, b) => b.position - a.position);
     return colorRoles.length ? intToHex(colorRoles[0].color) : '#99aab5';
   }

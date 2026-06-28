@@ -216,3 +216,30 @@ html, body, #root {
 @media (min-width: 1280px) {
   .desktop-comfortable .message-hover { padding-left: 1.25rem; padding-right: 1.25rem; }
 }
+
+
+/* Settings-driven presentation */
+html.theme-light {
+  --color-discord-dark: #f2f3f5;
+  --color-discord-darker: #e3e5e8;
+  --color-discord-sidebar: #ffffff;
+  --color-discord-channel: #f9fafb;
+  --color-discord-input: #e3e5e8;
+  --color-discord-hover: #e9eaee;
+  --color-discord-active: #dfe1e5;
+  --color-discord-text: #2e3338;
+  --color-discord-text-muted: #5c626a;
+  --color-discord-header: #ffffff;
+  background: #f9fafb;
+  color: #2e3338;
+}
+html.theme-light body,
+html.theme-light #root { background: #f9fafb; color: #2e3338; }
+html.reduced-motion *, html.reduced-motion *::before, html.reduced-motion *::after {
+  animation-duration: 0.001ms !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+html.high-contrast { filter: contrast(1.12); }
+html.streamer-mode .select-all { filter: blur(4px); user-select: none; }
+html.compact-mode .message-hover { margin-top: 2px !important; padding-top: 1px !important; padding-bottom: 1px !important; }
