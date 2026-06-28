@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X, User, Shield, Palette, Bell, Keyboard, Accessibility, MonitorSpeaker, Globe, Zap, Link2, AppWindow, LogOut, ChevronRight } from 'lucide-react';
 import useStore from '../store/useStore';
 import { getUserAvatarUrl } from '../services/discordApi';
@@ -48,7 +48,7 @@ function SidebarNav({ items, section, current, onSelect }: { items: NavItem[]; s
 // ---- Content Pages ----
 
 function MyAccountPage() {
-  const { user } = useStore();
+  const { user, setError } = useStore();
   if (!user) return null;
   const avatarUrl = getUserAvatarUrl(user.id, user.avatar, user.discriminator);
 
@@ -80,14 +80,14 @@ function MyAccountPage() {
               <p className="text-xs text-discord-text-muted uppercase font-bold tracking-wide">{field.label}</p>
               <p className="text-sm text-discord-text mt-0.5">{field.value}</p>
             </div>
-            <button className="px-4 py-1.5 bg-discord-input hover:bg-discord-hover text-white text-sm rounded transition-colors font-medium">Edit</button>
+            <button onClick={() => setError('Editing account fields is not supported by Discord bot/OAuth2 API mode.')} className="px-4 py-1.5 bg-discord-input hover:bg-discord-hover text-white text-sm rounded transition-colors font-medium">Edit</button>
           </div>
         ))}
       </div>
 
       <div className="mt-6">
         <h3 className="text-xs text-discord-text-muted uppercase font-bold tracking-wide mb-3">Password and Authentication</h3>
-        <button className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors font-medium">
+        <button onClick={() => setError('Password changes must be done in Discord.')} className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors font-medium">
           Change Password
         </button>
         <div className="mt-4 p-3 bg-discord-dark rounded-lg">
@@ -100,10 +100,10 @@ function MyAccountPage() {
       <div className="mt-8 pt-4 border-t border-discord-border">
         <h3 className="text-xs text-discord-red uppercase font-bold tracking-wide mb-2">Account Removal</h3>
         <div className="flex gap-2">
-          <button className="px-4 py-2 border border-discord-red text-discord-red hover:bg-discord-red hover:text-white text-sm rounded transition-colors font-medium">
+          <button onClick={() => setError('Account removal actions must be done in Discord.')} className="px-4 py-2 border border-discord-red text-discord-red hover:bg-discord-red hover:text-white text-sm rounded transition-colors font-medium">
             Disable Account
           </button>
-          <button className="px-4 py-2 border border-discord-red text-white bg-discord-red hover:bg-red-700 text-sm rounded transition-colors font-medium">
+          <button onClick={() => setError('Account removal actions must be done in Discord.')} className="px-4 py-2 border border-discord-red text-white bg-discord-red hover:bg-red-700 text-sm rounded transition-colors font-medium">
             Delete Account
           </button>
         </div>
@@ -113,7 +113,7 @@ function MyAccountPage() {
 }
 
 function ProfilesPage() {
-  const { user } = useStore();
+  const { user, setError } = useStore();
   if (!user) return null;
   const avatarUrl = getUserAvatarUrl(user.id, user.avatar, user.discriminator);
 
@@ -134,8 +134,8 @@ function ProfilesPage() {
                 <img src={avatarUrl} alt="" className="w-20 h-20 rounded-full"
                   onError={(e) => { (e.target as HTMLImageElement).src = 'https://cdn.discordapp.com/embed/avatars/0.png'; }} />
                 <div className="flex gap-2">
-                  <button className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">Change Avatar</button>
-                  <button className="px-4 py-2 text-white text-sm rounded border border-discord-border hover:bg-discord-hover transition-colors">Remove Avatar</button>
+                  <button onClick={() => setError('Changing avatars is not supported by this API mode.')} className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">Change Avatar</button>
+                  <button onClick={() => setError('Removing avatars is not supported by this API mode.')} className="px-4 py-2 text-white text-sm rounded border border-discord-border hover:bg-discord-hover transition-colors">Remove Avatar</button>
                 </div>
               </div>
             </div>
@@ -388,13 +388,13 @@ function NotificationsPage() {
 }
 
 function ToggleRow({ label, desc, defaultVal }: { label: string; desc: string; defaultVal: boolean }) {
-  const ref = useRef(defaultVal);
+  const [enabled, setEnabled] = useState(defaultVal);
   return (
     <div className="flex items-center justify-between py-2">
       <div><p className="text-sm font-medium text-discord-text">{label}</p><p className="text-xs text-discord-text-muted mt-0.5">{desc}</p></div>
-      <button onClick={() => { ref.current = !ref.current; }}
-        className={`w-10 h-6 rounded-full transition-colors relative ${ref.current ? 'bg-discord-green' : 'bg-discord-input'}`}>
-        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${ref.current ? 'translate-x-5' : 'translate-x-1'}`} />
+      <button onClick={() => setEnabled(!enabled)}
+        className={`w-10 h-6 rounded-full transition-colors relative ${enabled ? 'bg-discord-green' : 'bg-discord-input'}`}>
+        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`} />
       </button>
     </div>
   );
@@ -438,6 +438,7 @@ function VoicePage() {
 }
 
 function KeybindsPage() {
+  const { setError } = useStore();
   const binds = [
     { action: 'Toggle Mute', keys: 'Ctrl + Shift + M' },
     { action: 'Toggle Deafen', keys: 'Ctrl + Shift + D' },
@@ -460,12 +461,12 @@ function KeybindsPage() {
                   <kbd className="px-2 py-1 bg-discord-sidebar rounded text-xs text-discord-text border border-discord-border font-mono">{k}</kbd>
                 </span>
               ))}
-              <button className="ml-3 text-discord-text-muted hover:text-white transition-colors"><ChevronRight size={14} /></button>
+              <button onClick={() => setError('Editing keybinds is not implemented yet.')} className="ml-3 text-discord-text-muted hover:text-white transition-colors"><ChevronRight size={14} /></button>
             </div>
           </div>
         ))}
       </div>
-      <button className="mt-4 px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">
+      <button onClick={() => setError('Adding keybinds is not implemented yet.')} className="mt-4 px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">
         Add a Keybind
       </button>
     </div>

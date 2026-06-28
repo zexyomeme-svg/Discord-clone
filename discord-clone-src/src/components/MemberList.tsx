@@ -5,14 +5,14 @@ import type { GuildMember, Role } from '../store/types';
 
 function intToHex(c: number) { return (!c || c === 0) ? '#99aab5' : `#${c.toString(16).padStart(6, '0')}`; }
 
-const MemberItem = memo(({ member, roleColor }: { member: GuildMember; roleColor: string }) => {
+const MemberItem = memo(({ member, roleColor, onClick }: { member: GuildMember; roleColor: string; onClick: () => void }) => {
   const user = member.user;
   if (!user) return null;
   const av = getUserAvatarUrl(user.id, user.avatar, user.discriminator);
   const name = member.nick || user.global_name || user.username;
 
   return (
-    <button className="flex items-center gap-3 w-full px-2 py-[5px] rounded hover:bg-discord-hover transition-colors group">
+    <button onClick={onClick} className="flex items-center gap-3 w-full px-2 py-[5px] rounded hover:bg-discord-hover transition-colors group">
       <div className="relative flex-shrink-0">
         <img src={av} alt="" className="w-8 h-8 rounded-full group-hover:opacity-90 transition-opacity"
           onError={(e) => { (e.target as HTMLImageElement).src = 'https://cdn.discordapp.com/embed/avatars/0.png'; }} />
@@ -27,7 +27,7 @@ const MemberItem = memo(({ member, roleColor }: { member: GuildMember; roleColor
 });
 
 export default function MemberList() {
-  const { selectedGuildId, members, roles, showMemberList } = useStore();
+  const { selectedGuildId, members, roles, showMemberList, setError } = useStore();
   if (!showMemberList) return null;
 
   const gMembers = selectedGuildId ? members[selectedGuildId] || [] : [];
@@ -67,7 +67,7 @@ export default function MemberList() {
             <h3 className="px-2 text-[11px] font-bold text-discord-text-muted uppercase tracking-[0.02em] mb-1">
               {g.role ? g.role.name : 'Online'} — {g.members.length}
             </h3>
-            {g.members.map(m => <MemberItem key={m.user?.id} member={m} roleColor={getColor(m)} />)}
+            {g.members.map(m => <MemberItem key={m.user?.id} member={m} roleColor={getColor(m)} onClick={() => setError(`User profile: ${m.user?.global_name || m.user?.username || 'Unknown user'}`)} />)}
           </div>
         ))}
       </div>

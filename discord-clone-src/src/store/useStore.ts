@@ -67,7 +67,7 @@ interface AppState {
   selectDMChannel: (channelId: string) => Promise<void>;
   loadMessages: (channelId: string) => Promise<void>;
   loadMoreMessages: (channelId: string) => Promise<void>;
-  sendMessage: (channelId: string, content: string) => Promise<void>;
+  sendMessage: (channelId: string, content: string, files?: File[]) => Promise<void>;
   loadMembers: (guildId: string) => Promise<void>;
   loadRoles: (guildId: string) => Promise<void>;
   toggleMemberList: () => void;
@@ -279,22 +279,54 @@ const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  sendMessage: async (channelId: string, content: string) => {
+  sendMessage: async (channelId: string, content: string, files: File[] = []) => {
     const { token, authMode, user } = get();
-    if (!token || !user || authMode !== 'bot' || !content.trim()) return;
+    if (!token || !user || authMode !== 'bot' || (!content.trim() && files.length === 0)) return;
+    if (files.length > 10) {
+      set({ error: 'Discord supports up to 10 files per message.' });
+      throw new Error('Discord supports up to 10 files per message.');
+    }
+    const maxBytes = 25 * 1024 * 1024;
+    const tooLarge = files.find((file) => file.size > maxBytes);
+    if (tooLarge) {
+      const msg = `File "${tooLarge.name}" is too large. Keep uploads at or below 25 MB.`;
+      set({ error: msg });
+      throw new Error(msg);
+    }
     if (content.trim().length > 2000) {
       set({ error: 'Discord messages must be 2000 characters or fewer.' });
       throw new Error('Discord messages must be 2000 characters or fewer.');
     }
     const tempId = `temp-${Date.now()}`;
-    const tempMsg: Message = { id: tempId, channel_id: channelId, author: user, content: content.trim(), timestamp: new Date().toISOString(), edited_timestamp: null, tts: false, mention_everyone: false, mentions: [], attachments: [], embeds: [], pinned: false, type: 0 };
+    const tempMsg: Message = {
+      id: tempId,
+      channel_id: channelId,
+      author: user,
+      content: content.trim(),
+      timestamp: new Date().toISOString(),
+      edited_timestamp: null,
+      tts: false,
+      mention_everyone: false,
+      mentions: [],
+      attachments: files.map((file, index) => ({
+        id: `temp-${index}`,
+        filename: file.name,
+        size: file.size,
+        url: URL.createObjectURL(file),
+        proxy_url: URL.createObjectURL(file),
+        content_type: file.type || undefined,
+      })),
+      embeds: [],
+      pinned: false,
+      type: 0,
+    };
     set({
       error: null,
       isSendingMessages: { ...get().isSendingMessages, [channelId]: true },
       messages: { ...get().messages, [channelId]: [...(get().messages[channelId] || []), tempMsg] },
     });
     try {
-      const sent = await api.sendMessage(token, channelId, content.trim());
+      const sent = await api.sendMessage(token, channelId, content.trim(), files);
       set({
         isSendingMessages: { ...get().isSendingMessages, [channelId]: false },
         messages: { ...get().messages, [channelId]: (get().messages[channelId] || []).map((m: Message) => m.id === tempId ? sent : m) },

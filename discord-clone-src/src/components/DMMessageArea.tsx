@@ -1,8 +1,8 @@
 import { useRef, useEffect, useCallback, useState, memo } from 'react';
-import { Phone, Video, Pin, Search, Inbox, HelpCircle, PlusCircle, Smile, Gift, Sticker, Loader2, AtSign, FileText, Reply, MoreHorizontal } from 'lucide-react';
+import { Search, PlusCircle, Smile, Loader2, AtSign, FileText, Reply, MoreHorizontal, X } from 'lucide-react';
 import { Smile as EmojiIcon } from 'lucide-react';
 import useStore from '../store/useStore';
-import { getUserAvatarUrl } from '../services/discordApi';
+import { addReaction, getUserAvatarUrl } from '../services/discordApi';
 import type { Message, Channel } from '../store/types';
 import { format, isToday, isYesterday, isSameDay } from 'date-fns';
 
@@ -10,8 +10,17 @@ function fmtTs(ts: string) { const d = new Date(ts); if (isToday(d)) return `Tod
 function fmtShort(ts: string) { return format(new Date(ts), 'h:mm a'); }
 function shouldGroup(p: Message, c: Message) { return p.author.id === c.author.id && (new Date(c.timestamp).getTime() - new Date(p.timestamp).getTime()) < 420000; }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderMd(content: string) {
-  let r = content;
+  let r = escapeHtml(content);
   r = r.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   r = r.replace(/`([^`]+)`/g, '<code>$1</code>');
   r = r.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -29,13 +38,14 @@ function DateDivider({ date }: { date: Date }) {
 }
 
 const MsgRow = memo(({ message, isGrouped, fontSize }: { message: Message; isGrouped: boolean; fontSize: number }) => {
+  const { token, authMode, setError } = useStore();
   const av = getUserAvatarUrl(message.author.id, message.author.avatar, message.author.discriminator);
   return (
     <div className={`group message-hover relative flex px-4 ${isGrouped ? 'py-[2px]' : 'mt-[17px] pt-[2px]'}`}>
       <div className="msg-actions flex bg-discord-channel border border-discord-border rounded shadow-md">
-        <button className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><EmojiIcon size={18} /></button>
-        <button className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><Reply size={18} /></button>
-        <button className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><MoreHorizontal size={18} /></button>
+        <button title="Add thumbs up reaction" onClick={() => { if (!token || authMode !== 'bot') return setError('Reactions require bot-token mode.'); addReaction(token, message.channel_id, message.id).catch((err) => setError(err.message || 'Failed to add reaction')); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><EmojiIcon size={18} /></button>
+        <button title="Copy reply mention" onClick={() => { navigator.clipboard?.writeText(`<@${message.author.id}> `); setError('Copied reply mention to clipboard. Paste it into the message box.'); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><Reply size={18} /></button>
+        <button title="Copy message text" onClick={() => { navigator.clipboard?.writeText(message.content || ''); setError('Copied message text.'); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><MoreHorizontal size={18} /></button>
       </div>
       {isGrouped ? (
         <div className="w-[40px] mr-4 flex-shrink-0 flex items-center justify-end">
@@ -86,6 +96,8 @@ function DMWelcome({ channel }: { channel: Channel }) {
 export default function DMMessageArea() {
   const { selectedChannelId, dmChannels, messages, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, userSettings } = useStore();
   const [input, setInput] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -103,7 +115,7 @@ export default function DMMessageArea() {
     if (el.scrollTop < 100 && selectedChannelId && !isLoadingMessages) loadMoreMessages(selectedChannelId);
   }, [selectedChannelId, isLoadingMessages, loadMoreMessages]);
 
-  const handleSend = async (e: React.FormEvent) => { e.preventDefault(); if (!input.trim() || !selectedChannelId) return; const m = input; setInput(''); try { await send(selectedChannelId, m); } catch { setInput(m); } };
+  const handleSend = async (e: React.FormEvent) => { e.preventDefault(); if ((!input.trim() && files.length === 0) || !selectedChannelId) return; const m = input; const sendingFiles = files; setInput(''); setFiles([]); try { await send(selectedChannelId, m, sendingFiles); } catch { setInput(m); setFiles(sendingFiles); } };
 
   if (!selectedChannelId || !ch) {
     return (
@@ -122,12 +134,7 @@ export default function DMMessageArea() {
       <div className="h-12 px-3 flex items-center justify-between border-b border-discord-darker/70 shadow-sm flex-shrink-0">
         <div className="flex items-center gap-2"><AtSign size={20} className="text-discord-text-muted" /><h3 className="font-semibold text-white text-[15px]">{rName}</h3></div>
         <div className="flex items-center gap-3">
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors"><Phone size={20} /></button>
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors"><Video size={20} /></button>
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors"><Pin size={20} /></button>
           <div className="relative"><input type="text" placeholder="Search" className="w-[140px] focus:w-[200px] bg-discord-dark text-discord-text text-sm rounded h-[24px] px-1.5 outline-none placeholder:text-discord-text-muted transition-all" /><Search size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-discord-text-muted pointer-events-none" /></div>
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors"><Inbox size={20} /></button>
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors"><HelpCircle size={20} /></button>
         </div>
       </div>
 
@@ -153,9 +160,23 @@ export default function DMMessageArea() {
 
       <div className="h-6 flex-shrink-0" />
 
+      {files.length > 0 && (
+        <div className="px-4 pb-2 flex flex-wrap gap-2 flex-shrink-0">
+          {files.map((file, index) => (
+            <div key={`${file.name}-${index}`} className="flex items-center gap-2 bg-discord-input text-discord-text rounded px-2 py-1 text-xs">
+              <FileText size={14} />
+              <span className="max-w-[180px] truncate">{file.name}</span>
+              <span className="text-discord-text-muted">{(file.size / 1024).toFixed(1)} KB</span>
+              <button type="button" onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))} className="text-discord-text-muted hover:text-white"><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <form onSubmit={handleSend} className="px-4 pb-6 flex-shrink-0">
         <div className="bg-discord-input rounded-lg flex items-end">
-          <button type="button" className="p-[10px] text-discord-text-muted hover:text-discord-text transition-colors flex-shrink-0"><PlusCircle size={22} /></button>
+          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { const selected = Array.from(e.target.files || []); setFiles((prev) => [...prev, ...selected].slice(0, 10)); e.currentTarget.value = ''; }} />
+          <button type="button" onClick={() => fileInputRef.current?.click()} title="Upload files" className="p-[10px] text-discord-text-muted hover:text-discord-text transition-colors flex-shrink-0"><PlusCircle size={22} /></button>
           <textarea value={input} onChange={e => setInput(e.target.value)} disabled={isSending}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
             placeholder={isSending ? 'Sending...' : `Message @${rName}`}
@@ -164,9 +185,7 @@ export default function DMMessageArea() {
             rows={1}
             onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }} />
           <div className="flex items-center gap-0.5 p-1.5 flex-shrink-0">
-            <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Gift size={22} /></button>
-            <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Sticker size={22} /></button>
-            <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Smile size={22} /></button>
+            <button type="button" onClick={() => setInput((v) => `${v}😊`)} title="Insert emoji" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Smile size={22} /></button>
             {isSending && <Loader2 size={18} className="animate-spin text-discord-text-muted mx-1" />}
           </div>
         </div>

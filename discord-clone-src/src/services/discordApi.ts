@@ -25,25 +25,27 @@ export function normalizeBotToken(token: string) {
   return token.trim().replace(/^Bot\s+/i, '');
 }
 
-function getHeaders(token: string, mode: AuthMode = 'bot') {
+function getHeaders(token: string, mode: AuthMode = 'bot', hasBody = false, isFormData = false) {
   const cleanToken = mode === 'bot' ? normalizeBotToken(token) : token.trim().replace(/^Bearer\s+/i, '');
-  return {
+  const headers: Record<string, string> = {
     'Authorization': mode === 'bot' ? `Bot ${cleanToken}` : `Bearer ${cleanToken}`,
-    'Content-Type': 'application/json',
   };
+  if (hasBody && !isFormData) headers['Content-Type'] = 'application/json';
+  return headers;
 }
 
 
 
 async function apiRequest(endpoint: string, token: string, options: RequestInit = {}, mode: AuthMode = 'bot'): Promise<any> {
   const url = buildApiUrl(endpoint);
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
   let res: Response;
   try {
     res = await fetch(url, {
       ...options,
       headers: {
-        ...getHeaders(token, mode),
+        ...getHeaders(token, mode, Boolean(options.body), isFormData),
         ...(options.headers || {}),
       },
     });
@@ -121,18 +123,38 @@ export async function getChannelMessages(token: string, channelId: string, limit
   return apiRequest(url, token);
 }
 
-export async function sendMessage(token: string, channelId: string, content: string) {
+export async function sendMessage(token: string, channelId: string, content: string, files: File[] = []) {
   const trimmed = content.trim();
-  if (!trimmed) throw new Error('Cannot send an empty message.');
+  if (!trimmed && files.length === 0) throw new Error('Cannot send an empty message.');
   if (trimmed.length > 2000) throw new Error('Discord messages must be 2000 characters or fewer.');
+  if (files.length > 10) throw new Error('Discord supports up to 10 files per message.');
+
+  const maxBytes = 25 * 1024 * 1024;
+  const tooLarge = files.find((file) => file.size > maxBytes);
+  if (tooLarge) throw new Error(`File "${tooLarge.name}" is too large. Keep uploads at or below 25 MB.`);
+
+  const payload = {
+    content: trimmed,
+    tts: false,
+    nonce: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  };
+
+  if (files.length > 0) {
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify(payload));
+    files.forEach((file, index) => form.append(`files[${index}]`, file, file.name));
+    return apiRequest(`/channels/${channelId}/messages`, token, { method: 'POST', body: form });
+  }
 
   return apiRequest(`/channels/${channelId}/messages`, token, {
     method: 'POST',
-    body: JSON.stringify({
-      content: trimmed,
-      tts: false,
-      nonce: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function addReaction(token: string, channelId: string, messageId: string, emoji = '👍') {
+  return apiRequest(`/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`, token, {
+    method: 'PUT',
   });
 }
 
@@ -277,7 +299,12 @@ export function getGuildIconUrl(guildId: string, iconHash: string | null, size =
 
 export function getUserAvatarUrl(userId: string, avatarHash: string | null, discriminator?: string, size = 128) {
   if (!avatarHash) {
-    const index = discriminator ? parseInt(discriminator) % 5 : parseInt(userId) >> 22 % 6;
+    let index = 0;
+    if (discriminator && discriminator !== '0') {
+      index = Number.parseInt(discriminator, 10) % 5;
+    } else {
+      try { index = Number((BigInt(userId) >> 22n) % 6n); } catch { index = 0; }
+    }
     return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
   }
   const ext = avatarHash.startsWith('a_') ? 'gif' : 'png';

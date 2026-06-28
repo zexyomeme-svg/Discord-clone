@@ -138,10 +138,13 @@ Discord requires the bot to have the right server/channel permissions. At minimu
 - **View Channels**
 - **Read Message History**
 - **Send Messages**
+- **Attach Files** if you want uploads to work
 
 To receive live gateway message events and full message content, enable the **Message Content Intent** in the Discord Developer Portal under **Bot → Privileged Gateway Intents**. The app requests Gateway intents for guilds, guild members, guild messages, direct messages, and message content. Without the Message Content intent, Discord may return message objects but hide message text/content in some situations.
 
 Discord message content has a 2000 character limit for normal messages. The frontend validates this before sending.
+
+File uploads are supported in bot-token mode using Discord multipart message uploads. The UI supports selecting up to 10 files per message and validates a 25 MB per-file limit before sending.
 
 ### Discord `internal network error` / code `40333`
 

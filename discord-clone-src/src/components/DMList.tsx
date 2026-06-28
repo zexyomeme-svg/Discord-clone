@@ -33,7 +33,7 @@ const DMItem = memo(({ channel, isSelected, onClick }: { channel: Channel; isSel
 });
 
 export default function DMList() {
-  const { dmChannels, selectedChannelId, selectDMChannel } = useStore();
+  const { dmChannels, selectedChannelId, selectDMChannel, setError } = useStore();
   const [q, setQ] = useState('');
   const filtered = dmChannels.filter(ch => {
     if (!q) return true;
@@ -51,12 +51,12 @@ export default function DMList() {
       </div>
 
       <div className="flex-1 overflow-y-auto channel-scroll pt-2 px-2 min-h-0">
-        <button className="flex items-center gap-3 w-full px-2 py-[6px] rounded text-discord-text-muted hover:text-discord-text hover:bg-discord-hover transition-colors">
+        <button onClick={() => setError('Friends are only available through Discord OAuth2/user-client features, not bot tokens.')} className="flex items-center gap-3 w-full px-2 py-[6px] rounded text-discord-text-muted hover:text-discord-text hover:bg-discord-hover transition-colors">
           <Users size={20} /><span className="text-[15px] font-medium">Friends</span>
         </button>
         <div className="flex items-center justify-between px-2 pt-5 pb-1">
           <span className="text-[11px] font-bold text-discord-text-muted uppercase tracking-[0.02em]">Direct Messages</span>
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors"><Plus size={16} /></button>
+          <button onClick={() => setError('Starting new DMs requires a recipient user ID and bot permission context. Existing bot DM channels are listed automatically.')} className="text-discord-text-muted hover:text-discord-text transition-colors"><Plus size={16} /></button>
         </div>
 
         {!filtered.length ? (

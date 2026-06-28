@@ -53,7 +53,7 @@ function CategorySection({ name, channels, selectedChannelId, onSelectChannel }:
 }
 
 export default function ChannelList() {
-  const { guilds, selectedGuildId, channels, selectedChannelId, selectChannel, isLoadingChannels } = useStore();
+  const { guilds, selectedGuildId, channels, selectedChannelId, selectChannel, isLoadingChannels, setError } = useStore();
   const guild = guilds.find(g => g.id === selectedGuildId);
   const guildChannels = selectedGuildId ? channels[selectedGuildId] || [] : [];
 
@@ -65,7 +65,7 @@ export default function ChannelList() {
   return (
     <div className="w-[240px] bg-discord-sidebar flex flex-col flex-shrink-0 h-full min-h-0">
       {/* Server header */}
-      <button className="h-12 px-4 flex items-center justify-between border-b border-discord-darker/70 shadow-sm hover:bg-discord-hover transition-colors flex-shrink-0">
+      <button onClick={() => setError('Server menu actions are not implemented yet.')} className="h-12 px-4 flex items-center justify-between border-b border-discord-darker/70 shadow-sm hover:bg-discord-hover transition-colors flex-shrink-0">
         <h2 className="font-semibold text-white truncate text-[15px]">{guild?.name || 'Server'}</h2>
         <ChevronDown size={18} className="text-discord-text-muted flex-shrink-0" />
       </button>

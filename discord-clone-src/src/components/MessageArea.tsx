@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useState, memo } from 'react';
-import { Hash, Users, Pin, Search, Inbox, HelpCircle, PlusCircle, Smile, Gift, Sticker, Loader2, AtSign, FileText, Smile as EmojiIcon, Reply, MoreHorizontal } from 'lucide-react';
+import { Hash, Users, Search, PlusCircle, Smile, Loader2, FileText, Smile as EmojiIcon, Reply, MoreHorizontal, X } from 'lucide-react';
 import useStore from '../store/useStore';
-import { getUserAvatarUrl } from '../services/discordApi';
+import { addReaction, getUserAvatarUrl } from '../services/discordApi';
 import type { Message, Channel } from '../store/types';
 import { format, isToday, isYesterday, isSameDay } from 'date-fns';
 
@@ -18,8 +18,17 @@ function shouldGroup(prev: Message, curr: Message) {
   return prev.author.id === curr.author.id && (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) < 420000;
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderMd(content: string) {
-  let r = content;
+  let r = escapeHtml(content);
   r = r.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   r = r.replace(/`([^`]+)`/g, '<code>$1</code>');
   r = r.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -50,6 +59,7 @@ function DateDivider({ date }: { date: Date }) {
 }
 
 const MessageRow = memo(({ message, isGrouped, fontSize }: { message: Message; isGrouped: boolean; fontSize: number }) => {
+  const { token, authMode, setError } = useStore();
   const avatarUrl = getUserAvatarUrl(message.author.id, message.author.avatar, message.author.discriminator);
   const isSys = message.type !== 0 && message.type !== 19;
   if (isSys) {
@@ -66,9 +76,9 @@ const MessageRow = memo(({ message, isGrouped, fontSize }: { message: Message; i
     <div className={`group message-hover relative flex px-4 ${isGrouped ? 'py-[2px]' : 'mt-[17px] pt-[2px]'}`}>
       {/* Action bar */}
       <div className="msg-actions flex bg-discord-channel border border-discord-border rounded shadow-md">
-        <button className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><EmojiIcon size={18} /></button>
-        <button className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><Reply size={18} /></button>
-        <button className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><MoreHorizontal size={18} /></button>
+        <button title="Add thumbs up reaction" onClick={() => { if (!token || authMode !== 'bot') return setError('Reactions require bot-token mode.'); addReaction(token, message.channel_id, message.id).catch((err) => setError(err.message || 'Failed to add reaction')); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><EmojiIcon size={18} /></button>
+        <button title="Copy reply mention" onClick={() => { navigator.clipboard?.writeText(`<@${message.author.id}> `); setError('Copied reply mention to clipboard. Paste it into the message box.'); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><Reply size={18} /></button>
+        <button title="Copy message text" onClick={() => { navigator.clipboard?.writeText(message.content || ''); setError('Copied message text.'); }} className="p-1 hover:bg-discord-hover text-discord-text-muted hover:text-discord-text transition-colors"><MoreHorizontal size={18} /></button>
       </div>
 
       {isGrouped ? (
@@ -172,6 +182,8 @@ function WelcomeMsg({ channel }: { channel?: Channel }) {
 export default function MessageArea() {
   const { selectedChannelId, selectedGuildId, channels, messages, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, toggleMemberList, showMemberList, typingUsers, userSettings } = useStore();
   const [input, setInput] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -193,9 +205,9 @@ export default function MessageArea() {
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !selectedChannelId) return;
-    const msg = input; setInput('');
-    try { await send(selectedChannelId, msg); } catch { setInput(msg); }
+    if ((!input.trim() && files.length === 0) || !selectedChannelId) return;
+    const msg = input; const sendingFiles = files; setInput(''); setFiles([]);
+    try { await send(selectedChannelId, msg, sendingFiles); } catch { setInput(msg); setFiles(sendingFiles); }
   };
 
   if (!selectedChannelId) {
@@ -220,15 +232,11 @@ export default function MessageArea() {
           {ch?.topic && <><div className="w-px h-6 bg-discord-border mx-1.5 flex-shrink-0" /><p className="text-sm text-discord-text-muted truncate">{ch.topic}</p></>}
         </div>
         <div className="flex items-center gap-3 flex-shrink-0 ml-2">
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors" title="Threads"><AtSign size={20} /></button>
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors" title="Pinned Messages"><Pin size={20} /></button>
           <button onClick={toggleMemberList} className={`transition-colors ${showMemberList ? 'text-white' : 'text-discord-text-muted hover:text-discord-text'}`} title="Member List"><Users size={20} /></button>
           <div className="relative">
             <input type="text" placeholder="Search" className="w-[140px] focus:w-[200px] bg-discord-dark text-discord-text text-sm rounded h-[24px] px-1.5 outline-none placeholder:text-discord-text-muted transition-all" />
             <Search size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-discord-text-muted pointer-events-none" />
           </div>
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors" title="Inbox"><Inbox size={20} /></button>
-          <button className="text-discord-text-muted hover:text-discord-text transition-colors" title="Help"><HelpCircle size={20} /></button>
         </div>
       </div>
 
@@ -272,10 +280,24 @@ export default function MessageArea() {
         )}
       </div>
 
+      {files.length > 0 && (
+        <div className="px-4 pb-2 flex flex-wrap gap-2 flex-shrink-0">
+          {files.map((file, index) => (
+            <div key={`${file.name}-${index}`} className="flex items-center gap-2 bg-discord-input text-discord-text rounded px-2 py-1 text-xs">
+              <FileText size={14} />
+              <span className="max-w-[180px] truncate">{file.name}</span>
+              <span className="text-discord-text-muted">{(file.size / 1024).toFixed(1)} KB</span>
+              <button type="button" onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))} className="text-discord-text-muted hover:text-white"><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Input */}
       <form onSubmit={handleSend} className="px-4 pb-6 flex-shrink-0">
         <div className="bg-discord-input rounded-lg flex items-end">
-          <button type="button" className="p-[10px] text-discord-text-muted hover:text-discord-text transition-colors flex-shrink-0"><PlusCircle size={22} /></button>
+          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { const selected = Array.from(e.target.files || []); setFiles((prev) => [...prev, ...selected].slice(0, 10)); e.currentTarget.value = ''; }} />
+          <button type="button" onClick={() => fileInputRef.current?.click()} title="Upload files" className="p-[10px] text-discord-text-muted hover:text-discord-text transition-colors flex-shrink-0"><PlusCircle size={22} /></button>
           <textarea value={input} onChange={e => setInput(e.target.value)} disabled={isSending}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
             placeholder={isSending ? 'Sending...' : `Message #${ch?.name || 'channel'}`}
@@ -284,9 +306,7 @@ export default function MessageArea() {
             rows={1}
             onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }} />
           <div className="flex items-center gap-0.5 p-1.5 flex-shrink-0">
-            <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Gift size={22} /></button>
-            <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Sticker size={22} /></button>
-            <button type="button" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Smile size={22} /></button>
+            <button type="button" onClick={() => setInput((v) => `${v}😊`)} title="Insert emoji" className="p-1 text-discord-text-muted hover:text-discord-text transition-colors rounded hover:bg-discord-hover"><Smile size={22} /></button>
             {isSending && <Loader2 size={18} className="animate-spin text-discord-text-muted mx-1" />}
           </div>
         </div>
