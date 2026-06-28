@@ -7,11 +7,12 @@ A Discord-style web client built with React, Vite, Tailwind CSS, Zustand, and a 
 ## What was optimized for Render
 
 - Added `run.py`, a Flask entrypoint that:
-  - automatically runs `npm ci`/`npm install` and `npm run build` if `dist/index.html` is missing,
+  - automatically finds npm, or installs a local Node.js runtime with `nodeenv` if npm is unavailable,
+  - automatically runs `npm ci --include=dev`/`npm install --include=dev` and `npm run build` if `dist/index.html` is missing,
   - serves the Vite production build from `dist/`,
   - provides a `/healthz` health check with frontend build status,
   - provides a same-origin `/api/discord/*` proxy to avoid browser CORS issues for Discord REST API calls.
-- Added `requirements.txt` with Flask, Gunicorn, CORS, and Requests dependencies.
+- Added `requirements.txt` with Flask, Gunicorn, CORS, Requests, and `nodeenv` dependencies.
 - Added `render.yaml` with build and start commands.
 - Updated the frontend API service to use the local Flask proxy for same-origin REST requests and normalize bot tokens automatically.
 - Updated package metadata and build scripts.
@@ -86,7 +87,7 @@ Create a new Render **Web Service** with these settings:
 - **Build Command:**
 
   ```bash
-  pip install -r requirements.txt && npm ci && npm run build
+  pip install -r requirements.txt && python run.py --build-only
   ```
 
 - **Start Command:**
@@ -97,7 +98,7 @@ Create a new Render **Web Service** with these settings:
 
 - **Health Check Path:** `/healthz`
 
-Render usually provides Node during builds. If your service does not, add the environment variable `NODE_VERSION=20.20.2` or use the included `render.yaml`.
+`run.py --build-only` uses system npm when available. If npm is unavailable, it uses `nodeenv` from `requirements.txt` to install a local Node.js runtime automatically. You can set `NODE_VERSION=20.20.2` or use the included `render.yaml`.
 
 ## Environment variables
 
@@ -109,6 +110,9 @@ Render usually provides Node during builds. If your service does not, add the en
 | `PROXY_TIMEOUT` | `30` | Discord proxy request timeout in seconds. |
 | `FLASK_DEBUG` | `0` | Set to `1` only for local debugging. |
 | `AUTO_BUILD_FRONTEND` | `1` | When enabled, `run.py` automatically installs/builds the Vite frontend if `dist/index.html` is missing. Set to `0` to disable. |
+| `NODE_VERSION` | `20.20.2` | Node.js version for the local `nodeenv` fallback when system npm is unavailable. |
+| `NODEENV_DIR` | `.nodeenv` | Directory for the local Node.js runtime installed by `nodeenv`. |
+| `NPM_BINARY` | unset | Optional explicit path/name for npm. |
 
 ## Login / token format
 
@@ -127,7 +131,7 @@ The frontend normalizes the value before sending requests, so the Discord API re
 - The app expects a Discord bot token entered in the login form. Do not hard-code this token in source code or environment variables.
 - Some Discord API features require privileged bot intents and proper server permissions.
 - `vite-plugin-singlefile` is enabled, so the production build is a compact single `dist/index.html` bundle.
-- On Render, the `render.yaml` build command still runs `npm ci && npm run build` for a faster, predictable deploy. The auto-build in `run.py` is a fallback for missing build output.
+- On Render, the `render.yaml` build command runs `python run.py --build-only`, which builds the frontend with system npm or the `nodeenv` fallback. The startup auto-build remains as a safety net for missing build output.
 
 ## Verification commands used
 
@@ -136,5 +140,6 @@ npm install
 npx tsc --noEmit
 npm run build
 python -m py_compile run.py
+python run.py --build-only
 python run.py
 ```

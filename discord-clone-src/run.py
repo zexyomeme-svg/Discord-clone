@@ -28,6 +28,11 @@ INDEX_FILE = DIST_DIR / "index.html"
 PACKAGE_JSON = BASE_DIR / "package.json"
 PACKAGE_LOCK = BASE_DIR / "package-lock.json"
 NODE_MODULES = BASE_DIR / "node_modules"
+NODE_MODULE_BIN = NODE_MODULES / ".bin"
+NODE_VERSION = os.environ.get("NODE_VERSION", "20.20.2")
+NODEENV_DIR = Path(os.environ.get("NODEENV_DIR", str(BASE_DIR / ".nodeenv")))
+NODEENV_BIN = NODEENV_DIR / ("Scripts" if os.name == "nt" else "bin")
+LOCAL_NPM = NODEENV_BIN / ("npm.cmd" if os.name == "nt" else "npm")
 
 DISCORD_API_BASE = os.environ.get("DISCORD_API_BASE", "https://discord.com/api/v10").rstrip("/")
 REQUEST_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "30"))
@@ -48,17 +53,75 @@ def _cors_origins() -> str | list[str]:
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
 
 
+def _startup_env() -> dict[str, str]:
+    """Environment for npm commands. Force devDependencies for Vite builds."""
+    env = os.environ.copy()
+    extra_path = [str(NODE_MODULE_BIN), str(NODEENV_BIN)]
+    existing_path = env.get("PATH", "")
+    # npm package lifecycle scripts need a POSIX shell. Some hosts provide a very
+    # small PATH during startup, so include common system directories explicitly.
+    fallback_path = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+    env["PATH"] = os.pathsep.join(extra_path + [existing_path, fallback_path])
+    env["NPM_CONFIG_PRODUCTION"] = "false"
+    env["npm_config_production"] = "false"
+    return env
+
+
 def _run_command(command: list[str], description: str) -> None:
     """Run a setup command and raise a helpful error if it fails."""
     print(f"[startup] {description}: {' '.join(command)}", flush=True)
     try:
-        subprocess.run(command, cwd=BASE_DIR, check=True)
+        subprocess.run(command, cwd=BASE_DIR, check=True, env=_startup_env())
     except FileNotFoundError as exc:
         raise RuntimeError(
-            f"Could not run `{command[0]}`. Make sure Node.js and npm are installed."
+            f"Could not run `{command[0]}`. Make sure Node.js/npm are installed, "
+            "or keep nodeenv in requirements.txt so run.py can install Node automatically."
         ) from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(f"{description} failed with exit code {exc.returncode}.") from exc
+
+
+def _find_npm() -> str | None:
+    """Return an npm executable from env, local nodeenv, or system PATH."""
+    configured = os.environ.get("NPM_BINARY")
+    if configured:
+        configured_path = Path(configured)
+        if configured_path.exists() or shutil.which(configured):
+            return configured
+
+    if LOCAL_NPM.exists():
+        return str(LOCAL_NPM)
+
+    system_npm = shutil.which("npm")
+    if system_npm:
+        return system_npm
+
+    return None
+
+
+def _ensure_npm() -> str:
+    """Ensure npm exists. If needed, install a local Node runtime via nodeenv."""
+    npm = _find_npm()
+    if npm:
+        return npm
+
+    try:
+        import nodeenv  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "npm was not found and nodeenv is not installed. Run `pip install -r requirements.txt` "
+            "after requirements.txt has been updated, then restart the server."
+        ) from exc
+
+    _run_command(
+        [sys.executable, "-m", "nodeenv", "--node", NODE_VERSION, "--prebuilt", str(NODEENV_DIR)],
+        f"Installing local Node.js {NODE_VERSION} runtime",
+    )
+
+    npm = _find_npm()
+    if not npm:
+        raise RuntimeError("nodeenv finished, but npm is still not available.")
+    return npm
 
 
 def ensure_frontend_build() -> None:
@@ -81,17 +144,16 @@ def ensure_frontend_build() -> None:
         print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
         return
 
-    if shutil.which("npm") is None:
-        _build_error = "Cannot build frontend automatically because npm was not found. Install Node.js/npm."
-        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
-        return
-
     try:
-        if not NODE_MODULES.exists():
-            install_command = ["npm", "ci"] if PACKAGE_LOCK.exists() else ["npm", "install"]
-            _run_command(install_command, "Installing frontend dependencies")
+        npm = _ensure_npm()
 
-        _run_command(["npm", "run", "build"], "Building frontend")
+        # Always run install when the build is missing. This fixes stale or production-only
+        # node_modules folders where devDependencies such as Vite are absent, which causes
+        # `npm run build` to fail with exit code 127.
+        install_command = [npm, "ci", "--include=dev"] if PACKAGE_LOCK.exists() else [npm, "install", "--include=dev"]
+        _run_command(install_command, "Installing frontend dependencies")
+
+        _run_command([npm, "run", "build"], "Building frontend")
     except RuntimeError as exc:
         _build_error = str(exc)
         print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
@@ -235,6 +297,14 @@ def serve_spa(path: str):
 
 
 if __name__ == "__main__":
+    if "--build-only" in sys.argv:
+        ensure_frontend_build()
+        if INDEX_FILE.exists() and _build_error is None:
+            print("[startup] Build-only check completed successfully.", flush=True)
+            raise SystemExit(0)
+        print(f"[startup] Build-only check failed: {_build_error}", file=sys.stderr, flush=True)
+        raise SystemExit(1)
+
     port = int(os.environ.get("PORT", "8000"))
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     app.run(host="0.0.0.0", port=port, debug=debug)
