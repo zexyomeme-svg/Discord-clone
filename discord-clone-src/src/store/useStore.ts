@@ -13,6 +13,29 @@ const DEFAULT_SETTINGS: UserSettings = {
   isDeafened: false,
 };
 
+
+function mergeMessagesUnique(messages: Message[]): Message[] {
+  const seen = new Set<string>();
+  const result: Message[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (seen.has(msg.id)) continue;
+    seen.add(msg.id);
+    result.unshift(msg);
+  }
+  return result;
+}
+
+function isMatchingPendingMessage(pending: Message, incoming: Message) {
+  if (!pending.id.startsWith('temp-')) return false;
+  if (pending.channel_id !== incoming.channel_id) return false;
+  if (pending.author?.id !== incoming.author?.id) return false;
+  if ((pending.content || '') !== (incoming.content || '')) return false;
+  const pendingTime = new Date(pending.timestamp).getTime();
+  const incomingTime = new Date(incoming.timestamp).getTime();
+  return Math.abs(incomingTime - pendingTime) < 30000;
+}
+
 function loadSettings(): UserSettings {
   try {
     const saved = localStorage.getItem('disclone_settings');
@@ -123,14 +146,26 @@ const useStore = create<AppState>((set, get) => ({
       let gateway: { close: () => void } | null = null;
       try {
         gateway = api.connectGateway(normalizedToken, {
-          onMessage: (data) => {
+          onMessage: (data: Message) => {
             const state = get();
             const chId = data.channel_id;
-            if (state.messages[chId]) {
-              if (!state.messages[chId].find((m: Message) => m.id === data.id)) {
-                set({ messages: { ...state.messages, [chId]: [...state.messages[chId], data] } });
-              }
+            const current = state.messages[chId];
+            if (!current) return;
+
+            if (current.some((m: Message) => m.id === data.id)) {
+              set({ messages: { ...state.messages, [chId]: mergeMessagesUnique(current.map((m: Message) => m.id === data.id ? data : m)) } });
+              return;
             }
+
+            const pendingIndex = current.findIndex((m: Message) => isMatchingPendingMessage(m, data));
+            if (pendingIndex >= 0) {
+              const next = [...current];
+              next[pendingIndex] = data;
+              set({ messages: { ...state.messages, [chId]: mergeMessagesUnique(next) } });
+              return;
+            }
+
+            set({ messages: { ...state.messages, [chId]: mergeMessagesUnique([...current, data]) } });
           },
           onMessageDelete: (data) => {
             const state = get();
@@ -248,7 +283,7 @@ const useStore = create<AppState>((set, get) => ({
     try {
       const msgs = await api.getChannelMessages(token, channelId, 50);
       set({
-        messages: { ...get().messages, [channelId]: (msgs || []).reverse() },
+        messages: { ...get().messages, [channelId]: mergeMessagesUnique((msgs || []).reverse()) },
         hasMoreMessages: { ...get().hasMoreMessages, [channelId]: (msgs || []).length === 50 },
         isLoadingMessages: false,
       });
@@ -267,7 +302,7 @@ const useStore = create<AppState>((set, get) => ({
       const older = await api.getChannelMessages(token, channelId, 50, msgs[0].id);
       if (older?.length) {
         set({
-          messages: { ...get().messages, [channelId]: [...older.reverse(), ...(get().messages[channelId] || msgs)] },
+          messages: { ...get().messages, [channelId]: mergeMessagesUnique([...older.reverse(), ...(get().messages[channelId] || msgs)]) },
           hasMoreMessages: { ...get().hasMoreMessages, [channelId]: older.length === 50 },
           isLoadingMoreMessages: false,
         });
@@ -329,7 +364,12 @@ const useStore = create<AppState>((set, get) => ({
       const sent = await api.sendMessage(token, channelId, content.trim(), files);
       set({
         isSendingMessages: { ...get().isSendingMessages, [channelId]: false },
-        messages: { ...get().messages, [channelId]: (get().messages[channelId] || []).map((m: Message) => m.id === tempId ? sent : m) },
+        messages: {
+          ...get().messages,
+          [channelId]: mergeMessagesUnique(
+            (get().messages[channelId] || []).map((m: Message) => m.id === tempId ? sent : m)
+          ),
+        },
       });
     } catch (err: any) {
       set({
