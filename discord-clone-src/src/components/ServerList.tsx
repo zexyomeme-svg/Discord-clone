@@ -3,7 +3,7 @@ import useStore from '../store/useStore';
 import { getGuildIconUrl } from '../services/discordApi';
 
 export default function ServerList() {
-  const { guilds, selectedGuildId, selectGuild, viewMode, setViewMode, setError } = useStore();
+  const { guilds, selectedGuildId, selectGuild, viewMode, setViewMode, channels, unreadCounts, userSettings } = useStore();
 
   return (
     <div className="w-[72px] bg-discord-darker flex flex-col items-center py-3 overflow-y-auto thin-scroll flex-shrink-0 h-full gap-2">
@@ -26,6 +26,7 @@ export default function ServerList() {
         const isSelected = selectedGuildId === guild.id && viewMode === 'servers';
         const iconUrl = getGuildIconUrl(guild.id, guild.icon, 128);
         const initials = guild.name.split(/\s+/).map(w => w[0]).join('').slice(0, 3);
+        const guildUnread = userSettings.unreadBadge ? (channels[guild.id] || []).reduce((sum, ch) => sum + (unreadCounts[ch.id] || 0), 0) : 0;
 
         return (
           <div key={guild.id} className="tooltip-container relative flex-shrink-0">
@@ -50,6 +51,7 @@ export default function ServerList() {
             <div className={`absolute left-0 top-1/2 -translate-y-1/2 -translate-x-px w-1 rounded-r-full transition-all duration-200 ${
               isSelected ? 'h-10 bg-white' : 'h-0 group-hover:h-5 bg-white'
             }`} />
+            {guildUnread > 0 && <span className="absolute -right-1 -bottom-1 min-w-5 h-5 px-1 rounded-full bg-discord-red text-white text-[11px] font-bold flex items-center justify-center border-2 border-discord-darker">{guildUnread > 99 ? '99+' : guildUnread}</span>}
             <span className="tooltip-text">{guild.name}</span>
           </div>
         );
@@ -58,14 +60,14 @@ export default function ServerList() {
       <div className="w-8 h-0.5 bg-discord-channel rounded-full flex-shrink-0" />
 
       <div className="tooltip-container relative flex-shrink-0">
-        <button onClick={() => setError('Add Server uses Discord OAuth invite links. Use the Discord Developer Portal invite URL for now.')} className="w-12 h-12 flex items-center justify-center rounded-[24px] hover:rounded-[16px] bg-discord-channel hover:bg-discord-green transition-all duration-200 group">
+        <button onClick={() => window.open('https://discord.com/developers/applications', '_blank', 'noopener,noreferrer')} className="w-12 h-12 flex items-center justify-center rounded-[24px] hover:rounded-[16px] bg-discord-channel hover:bg-discord-green transition-all duration-200 group">
           <Plus size={24} className="text-discord-green group-hover:text-white transition-colors" />
         </button>
         <span className="tooltip-text">Add a Server</span>
       </div>
 
       <div className="tooltip-container relative flex-shrink-0">
-        <button onClick={() => setError('Server discovery is not available in the Discord bot API.')} className="w-12 h-12 flex items-center justify-center rounded-[24px] hover:rounded-[16px] bg-discord-channel hover:bg-discord-green transition-all duration-200 group">
+        <button onClick={() => window.open('https://discord.com/servers', '_blank', 'noopener,noreferrer')} className="w-12 h-12 flex items-center justify-center rounded-[24px] hover:rounded-[16px] bg-discord-channel hover:bg-discord-green transition-all duration-200 group">
           <Compass size={24} className="text-discord-green group-hover:text-white transition-colors" />
         </button>
         <span className="tooltip-text">Explore Servers</span>

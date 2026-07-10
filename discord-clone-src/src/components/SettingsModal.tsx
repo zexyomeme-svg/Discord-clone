@@ -33,14 +33,18 @@ function SidebarNav({ items, section, current, onSelect }: { items: NavItem[]; s
   return (
     <div className="mb-2">
       <h3 className="px-2.5 py-1.5 text-[11px] font-bold text-discord-text-muted uppercase tracking-[0.02em]">{section}</h3>
-      {items.map(item => (
-        <button key={item.id} onClick={() => onSelect(item.id)}
-          className={`flex items-center gap-2 w-full px-2.5 py-[6px] rounded text-[15px] transition-colors mb-px ${
-            current === item.id ? 'bg-discord-active text-white' : 'text-discord-text-muted hover:text-discord-text hover:bg-discord-hover'
-          }`}>
-          {item.label}
-        </button>
-      ))}
+      {items.map(item => {
+        const Icon = item.icon;
+        return (
+          <button key={item.id} onClick={() => onSelect(item.id)}
+            className={`flex items-center gap-2 w-full px-2.5 py-[6px] rounded text-[15px] transition-colors mb-px ${
+              current === item.id ? 'bg-discord-active text-white' : 'text-discord-text-muted hover:text-discord-text hover:bg-discord-hover'
+            }`}>
+            <Icon size={16} className="flex-shrink-0" />
+            <span className="truncate">{item.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -72,7 +76,7 @@ function copyToClipboard(value: string, setError: (error: string | null) => void
 // ---- Content Pages ----
 
 function MyAccountPage() {
-  const { user, setError } = useStore();
+  const { user } = useStore();
   if (!user) return null;
   const avatarUrl = getUserAvatarUrl(user.id, user.avatar, user.discriminator);
 
@@ -99,37 +103,20 @@ function MyAccountPage() {
           { label: 'EMAIL', value: user.email || '••••••••@••••.com' },
           { label: 'PHONE NUMBER', value: 'Not set' },
         ].map(field => (
-          <div key={field.label} className="flex items-center justify-between">
-            <div>
-              <p className="text-xs text-discord-text-muted uppercase font-bold tracking-wide">{field.label}</p>
-              <p className="text-sm text-discord-text mt-0.5">{field.value}</p>
-            </div>
-            <button onClick={() => setError('Editing account fields is not supported by Discord bot/OAuth2 API mode.')} className="px-4 py-1.5 bg-discord-input hover:bg-discord-hover text-white text-sm rounded transition-colors font-medium">Edit</button>
+          <div key={field.label}>
+            <p className="text-xs text-discord-text-muted uppercase font-bold tracking-wide">{field.label}</p>
+            <p className="text-sm text-discord-text mt-0.5">{field.value}</p>
           </div>
         ))}
       </div>
 
       <div className="mt-6">
         <h3 className="text-xs text-discord-text-muted uppercase font-bold tracking-wide mb-3">Password and Authentication</h3>
-        <button onClick={() => setError('Password changes must be done in Discord.')} className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors font-medium">
-          Change Password
-        </button>
-        <div className="mt-4 p-3 bg-discord-dark rounded-lg">
+        <div className="p-3 bg-discord-dark rounded-lg space-y-2">
           <p className="text-sm text-discord-text-muted">
             {user.mfa_enabled ? '✅ Two-Factor Authentication is enabled.' : '⚠️ Two-Factor Authentication is not enabled.'}
           </p>
-        </div>
-      </div>
-
-      <div className="mt-8 pt-4 border-t border-discord-border">
-        <h3 className="text-xs text-discord-red uppercase font-bold tracking-wide mb-2">Account Removal</h3>
-        <div className="flex gap-2">
-          <button onClick={() => setError('Account removal actions must be done in Discord.')} className="px-4 py-2 border border-discord-red text-discord-red hover:bg-discord-red hover:text-white text-sm rounded transition-colors font-medium">
-            Disable Account
-          </button>
-          <button onClick={() => setError('Account removal actions must be done in Discord.')} className="px-4 py-2 border border-discord-red text-white bg-discord-red hover:bg-red-700 text-sm rounded transition-colors font-medium">
-            Delete Account
-          </button>
+          <p className="text-xs text-discord-text-muted">Password, 2FA, email, phone, and account-removal controls are intentionally not shown here because Discord does not allow bot/OAuth2 API sessions to mutate those account-security settings.</p>
         </div>
       </div>
     </div>
@@ -137,10 +124,10 @@ function MyAccountPage() {
 }
 
 function ProfilesPage() {
-  const { user, setError } = useStore();
-  const [displayName, setDisplayName] = useState(user?.global_name || user?.username || '');
-  const [bannerColor, setBannerColor] = useState(user?.accent_color ? `#${user.accent_color.toString(16).padStart(6, '0')}` : '#5865f2');
-  const [bio, setBio] = useState(user?.bio || '');
+  const { user, userSettings, updateSettings } = useStore();
+  const [displayName, setDisplayName] = useState(userSettings.localDisplayName || user?.global_name || user?.username || '');
+  const [bannerColor, setBannerColor] = useState(userSettings.localBannerColor || (user?.accent_color ? `#${user.accent_color.toString(16).padStart(6, '0')}` : '#5865f2'));
+  const [bio, setBio] = useState(userSettings.localBio || user?.bio || '');
   if (!user) return null;
   const avatarUrl = getUserAvatarUrl(user.id, user.avatar, user.discriminator);
 
@@ -160,10 +147,7 @@ function ProfilesPage() {
               <div className="flex items-center gap-4">
                 <img src={avatarUrl} alt="" className="w-20 h-20 rounded-full"
                   onError={(e) => { (e.target as HTMLImageElement).src = 'https://cdn.discordapp.com/embed/avatars/0.png'; }} />
-                <div className="flex gap-2">
-                  <button onClick={() => setError('Changing avatars is not supported by this API mode.')} className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">Change Avatar</button>
-                  <button onClick={() => setError('Removing avatars is not supported by this API mode.')} className="px-4 py-2 text-white text-sm rounded border border-discord-border hover:bg-discord-hover transition-colors">Remove Avatar</button>
-                </div>
+                <p className="text-xs text-discord-text-muted leading-relaxed">Discord avatar changes are account-security/profile mutations and must be done in Discord. This page saves local display preview fields.</p>
               </div>
             </div>
             <div>
@@ -180,7 +164,7 @@ function ProfilesPage() {
                 className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark focus:border-discord-blurple outline-none resize-none h-24" />
               <p className="text-xs text-discord-text-muted mt-1">You can use markdown and links.</p>
             </div>
-            <button onClick={() => setError('Profile preview saved locally for this settings session. Discord profile updates must be made in Discord.')} className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">Save Preview</button>
+            <button onClick={() => updateSettings({ localDisplayName: displayName.trim(), localBannerColor: bannerColor, localBio: bio })} className="px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors">Save Local Preview</button>
           </div>
         </div>
 
@@ -486,39 +470,84 @@ function NotificationsPage() {
 }
 
 function VoicePage() {
-  const { userSettings, updateSettings } = useStore();
-  const devices = ['default', 'communications', 'external microphone', 'headset'];
+  const { userSettings, updateSettings, setError } = useStore();
+  const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
+  const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
+
+  const refreshDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setError('This browser does not support media device selection.');
+      return;
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setInputs(devices.filter((d) => d.kind === 'audioinput'));
+      setOutputs(devices.filter((d) => d.kind === 'audiooutput'));
+    } catch (err: any) {
+      setError(err.message || 'Could not load media devices.');
+    }
+  };
+
+  const requestDeviceAccess = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      await refreshDevices();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      await refreshDevices();
+      setError('Voice device list refreshed.');
+    } catch (err: any) {
+      setError(err.message || 'Microphone permission was not granted.');
+      await refreshDevices();
+    }
+  };
+
+  useEffect(() => { refreshDevices(); }, []);
+
+  const inputOptions = inputs.length ? inputs : [];
+  const outputOptions = outputs.length ? outputs : [];
+
   return (
     <div className="animate-fade-in-fast">
       <h2 className="text-xl font-bold text-white mb-5">Voice & Video</h2>
+      <div className="mb-4 p-3 bg-discord-dark rounded-lg text-sm text-discord-text-muted">
+        These controls save the browser devices used by this web UI. Click refresh/allow microphone access if your device names are hidden.
+      </div>
+      <button onClick={requestDeviceAccess} className="mb-6 px-4 py-2 bg-discord-blurple hover:bg-discord-blurple-hover text-white text-sm rounded transition-colors font-medium">
+        Refresh Voice Devices
+      </button>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <div>
           <label className="block text-xs font-bold text-discord-text-muted uppercase tracking-wide mb-2">Input Device</label>
           <select value={userSettings.inputDevice} onChange={(e) => updateSettings({ inputDevice: e.target.value })} className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark outline-none">
-            {devices.map(d => <option key={d} value={d}>{d === 'default' ? 'Default' : d}</option>)}
+            <option value="default">Default</option>
+            {inputOptions.map((d, index) => <option key={d.deviceId || index} value={d.deviceId}>{d.label || `Microphone ${index + 1}`}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-xs font-bold text-discord-text-muted uppercase tracking-wide mb-2">Output Device</label>
           <select value={userSettings.outputDevice} onChange={(e) => updateSettings({ outputDevice: e.target.value })} className="w-full bg-discord-dark text-discord-text text-sm rounded px-3 py-2 border border-discord-dark outline-none">
-            {devices.map(d => <option key={d} value={d}>{d === 'default' ? 'Default' : d}</option>)}
+            <option value="default">Default</option>
+            {outputOptions.map((d, index) => <option key={d.deviceId || index} value={d.deviceId}>{d.label || `Speaker ${index + 1}`}</option>)}
           </select>
         </div>
       </div>
-      <SettingsRow label="Mute" enabled={userSettings.isMuted} onToggle={() => updateSettings({ isMuted: !userSettings.isMuted })} />
-      <SettingsRow label="Deafen" enabled={userSettings.isDeafened} onToggle={() => updateSettings({ isDeafened: !userSettings.isDeafened })} />
+      <SettingsRow label="Mute" desc="Sets the local mute status shown in the user panel." enabled={userSettings.isMuted} onToggle={() => updateSettings({ isMuted: !userSettings.isMuted })} />
+      <SettingsRow label="Deafen" desc="Sets the local deafen status shown in the user panel." enabled={userSettings.isDeafened} onToggle={() => updateSettings({ isDeafened: !userSettings.isDeafened })} />
     </div>
   );
 }
 
 function KeybindsPage() {
-  const { updateSettings, userSettings, setError } = useStore();
+  const { updateSettings, userSettings, closeSettings } = useStore();
   const binds = [
     { action: 'Toggle Mute', keys: 'Ctrl + Shift + M', run: () => updateSettings({ isMuted: !userSettings.isMuted }) },
     { action: 'Toggle Deafen', keys: 'Ctrl + Shift + D', run: () => updateSettings({ isDeafened: !userSettings.isDeafened }) },
-    { action: 'Open Search', keys: 'Ctrl + K', run: () => setError('Use the channel/DM search boxes in the current panel.') },
-    { action: 'Close Settings', keys: 'Escape', run: () => setError('Press Escape while settings are open to close settings.') },
-    { action: 'Upload File', keys: 'Ctrl + Shift + U', run: () => setError('Use the + button next to the message box to upload files.') },
+    { action: 'Open Search', keys: 'Ctrl + K', run: () => (document.querySelector('[data-app-search="true"]') as HTMLInputElement | null)?.focus() },
+    { action: 'Close Settings', keys: 'Escape', run: () => closeSettings() },
+    { action: 'Upload File', keys: 'Ctrl + Shift + U', run: () => (document.querySelector('[data-upload-trigger="true"]') as HTMLButtonElement | null)?.click() },
   ];
   return (
     <div className="animate-fade-in-fast">
@@ -611,10 +640,10 @@ export default function SettingsModal() {
   const handleLogout = () => { logout(); closeSettings(); };
 
   return (
-    <div className="fixed inset-0 z-[100] flex animate-settings-open bg-discord-channel">
+    <div className="fixed inset-0 z-[100] flex flex-col md:flex-row animate-settings-open bg-discord-channel">
       {/* Sidebar — right-aligned content */}
-      <div className="flex-[1_0_218px] flex justify-end bg-discord-sidebar">
-        <div className="w-[218px] overflow-y-auto channel-scroll py-[60px] px-[6px]">
+      <div className="w-full md:w-auto md:flex-[1_0_218px] flex md:justify-end bg-discord-sidebar max-h-[38vh] md:max-h-none flex-shrink-0">
+        <div className="w-full md:w-[218px] overflow-y-auto channel-scroll py-3 md:py-[60px] px-[6px]">
           <SidebarNav items={USER_SETTINGS} section="User Settings" current={settingsPage} onSelect={setSettingsPage} />
           <div className="h-px bg-discord-border mx-2.5 my-2" />
           <SidebarNav items={APP_SETTINGS} section="App Settings" current={settingsPage} onSelect={setSettingsPage} />
@@ -629,14 +658,14 @@ export default function SettingsModal() {
       </div>
 
       {/* Content */}
-      <div className="flex-[1_1_800px] max-w-[740px]">
-        <div ref={contentRef} className="h-full overflow-y-auto py-[60px] px-10">
+      <div className="flex-1 md:flex-[1_1_800px] md:max-w-[740px] min-h-0">
+        <div ref={contentRef} className="h-full overflow-y-auto py-5 md:py-[60px] px-4 md:px-10 pb-24">
           <SettingsContent page={settingsPage} />
         </div>
       </div>
 
       {/* Close button */}
-      <div className="flex-[0_1_36px] flex flex-col items-center pt-[60px]">
+      <div className="absolute top-3 right-3 md:static md:flex-[0_1_36px] flex flex-col items-center md:pt-[60px]">
         <button onClick={closeSettings}
           className="w-9 h-9 rounded-full border-2 border-discord-text-muted/40 flex items-center justify-center text-discord-text-muted hover:border-white hover:text-white transition-colors">
           <X size={18} />
@@ -645,7 +674,7 @@ export default function SettingsModal() {
       </div>
 
       {/* Remaining space */}
-      <div className="flex-[1_0_0px]" />
+      <div className="hidden md:block flex-[1_0_0px]" />
     </div>
   );
 }

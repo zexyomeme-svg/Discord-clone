@@ -33,8 +33,19 @@ const DMItem = memo(({ channel, isSelected, onClick }: { channel: Channel; isSel
 });
 
 export default function DMList() {
-  const { dmChannels, selectedChannelId, selectDMChannel, setError } = useStore();
+  const { dmChannels, selectedChannelId, selectDMChannel, createDMChannel, setError, unreadCounts, userSettings } = useStore();
   const [q, setQ] = useState('');
+  const [newDmUserId, setNewDmUserId] = useState('');
+  const [showNewDm, setShowNewDm] = useState(false);
+
+  const startDm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await createDMChannel(newDmUserId);
+      setNewDmUserId('');
+      setShowNewDm(false);
+    } catch { /* store shows error */ }
+  };
   const filtered = dmChannels.filter(ch => {
     if (!q) return true;
     return (ch.recipients?.map(r => r.username).join(' ') || ch.name || '').toLowerCase().includes(q.toLowerCase());
@@ -44,20 +55,27 @@ export default function DMList() {
     <div className="w-[240px] bg-discord-sidebar flex flex-col flex-shrink-0 h-full min-h-0">
       <div className="h-12 px-2 flex items-center border-b border-discord-darker/70 shadow-sm flex-shrink-0">
         <div className="w-full relative">
-          <input type="text" placeholder="Find or start a conversation" value={q} onChange={e => setQ(e.target.value)}
+          <input type="text" data-app-search="true" placeholder="Find or start a conversation" value={q} onChange={e => setQ(e.target.value)}
             className="w-full bg-discord-dark text-discord-text text-sm rounded h-[28px] px-2 outline-none placeholder:text-discord-text-muted" />
           <Search size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-discord-text-muted pointer-events-none" />
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto channel-scroll pt-2 px-2 min-h-0">
-        <button onClick={() => setError('Friends are only available through Discord OAuth2/user-client features, not bot tokens.')} className="flex items-center gap-3 w-full px-2 py-[6px] rounded text-discord-text-muted hover:text-discord-text hover:bg-discord-hover transition-colors">
-          <Users size={20} /><span className="text-[15px] font-medium">Friends</span>
+        <button onClick={() => setError('Friend management is a Discord user-client feature. Bot mode lists existing DMs and can create a bot DM by user ID.')} className="flex items-center gap-3 w-full px-2 py-[6px] rounded text-discord-text-muted hover:text-discord-text hover:bg-discord-hover transition-colors">
+          <Users size={20} /><span className="text-[15px] font-medium">Friends info</span>
         </button>
         <div className="flex items-center justify-between px-2 pt-5 pb-1">
           <span className="text-[11px] font-bold text-discord-text-muted uppercase tracking-[0.02em]">Direct Messages</span>
-          <button onClick={() => setError('Starting new DMs requires a recipient user ID and bot permission context. Existing bot DM channels are listed automatically.')} className="text-discord-text-muted hover:text-discord-text transition-colors"><Plus size={16} /></button>
+          <button onClick={() => setShowNewDm((v) => !v)} title="Start bot DM by user ID" className="text-discord-text-muted hover:text-discord-text transition-colors"><Plus size={16} /></button>
         </div>
+
+        {showNewDm && (
+          <form onSubmit={startDm} className="mx-2 mb-2 p-2 bg-discord-dark rounded space-y-2">
+            <input value={newDmUserId} onChange={(e) => setNewDmUserId(e.target.value)} placeholder="Recipient user ID" className="w-full bg-discord-input text-discord-text text-sm rounded px-2 py-1.5 outline-none" />
+            <button type="submit" className="w-full bg-discord-blurple hover:bg-discord-blurple-hover text-white text-xs font-medium py-1.5 rounded">Create DM</button>
+          </form>
+        )}
 
         {!filtered.length ? (
           <div className="px-2 py-8 text-center">
@@ -65,7 +83,14 @@ export default function DMList() {
           </div>
         ) : (
           <div className="space-y-px">
-            {filtered.map(ch => <DMItem key={ch.id} channel={ch} isSelected={selectedChannelId === ch.id} onClick={() => selectDMChannel(ch.id)} />)}
+            {filtered.map(ch => (
+              <div key={ch.id} className="relative">
+                <DMItem channel={ch} isSelected={selectedChannelId === ch.id} onClick={() => selectDMChannel(ch.id)} />
+                {userSettings.unreadBadge && (unreadCounts[ch.id] || 0) > 0 && (
+                  <span className="absolute right-7 top-1/2 -translate-y-1/2 min-w-5 h-5 px-1 rounded-full bg-discord-red text-white text-[11px] font-bold flex items-center justify-center">{unreadCounts[ch.id] > 99 ? '99+' : unreadCounts[ch.id]}</span>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>

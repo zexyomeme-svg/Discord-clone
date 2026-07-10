@@ -234,7 +234,7 @@ function decodeOAuthRedirectToken(value: string) {
 }
 
 export default function App() {
-  const { token, authMode, user, isLoading, login, loginWithOAuth, userSettings } = useStore();
+  const { token, authMode, user, isLoading, login, loginWithOAuth, userSettings, updateSettings, unreadCounts, settingsOpen, closeSettings } = useStore();
 
   useEffect(() => {
     const root = document.documentElement;
@@ -245,8 +245,45 @@ export default function App() {
     root.classList.toggle('streamer-mode', userSettings.streamerMode);
     root.classList.toggle('compact-mode', userSettings.compactMode);
     root.style.setProperty('--app-saturation', `${userSettings.saturation}%`);
+    root.lang = userSettings.language;
     document.body.style.filter = `saturate(${userSettings.saturation}%)`;
   }, [userSettings]);
+
+  useEffect(() => {
+    const totalUnread = Object.values(unreadCounts).reduce((sum, count) => sum + count, 0);
+    document.title = totalUnread > 0 && userSettings.unreadBadge ? `(${totalUnread}) Disclone` : 'Disclone';
+  }, [unreadCounts, userSettings.unreadBadge]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!event.ctrlKey) return;
+      const key = event.key.toLowerCase();
+      if (event.shiftKey && key === 'm') {
+        event.preventDefault();
+        updateSettings({ isMuted: !useStore.getState().userSettings.isMuted });
+      } else if (event.shiftKey && key === 'd') {
+        event.preventDefault();
+        updateSettings({ isDeafened: !useStore.getState().userSettings.isDeafened });
+      } else if (key === 'k') {
+        event.preventDefault();
+        (document.querySelector('[data-app-search="true"]') as HTMLInputElement | null)?.focus();
+      } else if (event.shiftKey && key === 'u') {
+        event.preventDefault();
+        (document.querySelector('[data-upload-trigger="true"]') as HTMLButtonElement | null)?.click();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [updateSettings]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeSettings();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [settingsOpen, closeSettings]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

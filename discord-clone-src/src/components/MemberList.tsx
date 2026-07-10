@@ -5,14 +5,14 @@ import type { GuildMember, Role } from '../store/types';
 
 function intToHex(c: number) { return (!c || c === 0) ? '#99aab5' : `#${c.toString(16).padStart(6, '0')}`; }
 
-const MemberItem = memo(({ member, roleColor, onClick }: { member: GuildMember; roleColor: string; onClick: () => void }) => {
+const MemberItem = memo(({ member, roleColor, streamerMode, developerMode }: { member: GuildMember; roleColor: string; streamerMode: boolean; developerMode: boolean }) => {
   const user = member.user;
   if (!user) return null;
   const av = getUserAvatarUrl(user.id, user.avatar, user.discriminator);
-  const name = member.nick || user.global_name || user.username;
+  const name = streamerMode ? 'Hidden User' : (member.nick || user.global_name || user.username);
 
   return (
-    <button onClick={onClick} className="flex items-center gap-3 w-full px-2 py-[5px] rounded hover:bg-discord-hover transition-colors group">
+    <div title={developerMode ? user.id : undefined} className="flex items-center gap-3 w-full px-2 py-[5px] rounded hover:bg-discord-hover transition-colors group">
       <div className="relative flex-shrink-0">
         <img src={av} alt="" className="w-8 h-8 rounded-full group-hover:opacity-90 transition-opacity"
           onError={(e) => { (e.target as HTMLImageElement).src = 'https://cdn.discordapp.com/embed/avatars/0.png'; }} />
@@ -22,12 +22,12 @@ const MemberItem = memo(({ member, roleColor, onClick }: { member: GuildMember; 
         {name}
         {user.bot && <span className="ml-1.5 bg-discord-blurple text-white text-[9px] font-semibold px-[4px] py-[1px] rounded align-middle uppercase">Bot</span>}
       </span>
-    </button>
+    </div>
   );
 });
 
 export default function MemberList() {
-  const { selectedGuildId, members, roles, showMemberList, userSettings, setError } = useStore();
+  const { selectedGuildId, members, roles, showMemberList, userSettings } = useStore();
   if (!showMemberList) return null;
 
   const gMembers = selectedGuildId ? members[selectedGuildId] || [] : [];
@@ -67,7 +67,7 @@ export default function MemberList() {
             <h3 className="px-2 text-[11px] font-bold text-discord-text-muted uppercase tracking-[0.02em] mb-1">
               {g.role ? g.role.name : 'Online'} — {g.members.length}
             </h3>
-            {g.members.map(m => <MemberItem key={m.user?.id} member={m} roleColor={getColor(m)} onClick={() => setError(`User profile: ${m.user?.global_name || m.user?.username || 'Unknown user'}`)} />)}
+            {g.members.map(m => <MemberItem key={m.user?.id} member={m} roleColor={getColor(m)} streamerMode={userSettings.streamerMode} developerMode={userSettings.developerMode} />)}
           </div>
         ))}
       </div>

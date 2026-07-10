@@ -4,23 +4,24 @@ This app serves the Vite production build from ./dist and exposes a small
 same-origin proxy at /api/discord/* so the React app can call Discord's REST API
 without relying on public CORS proxies.
 
-If ./dist/index.html is missing, run.py can automatically install Node packages
-and run the Vite build before the server starts. This makes `python run.py` and
-`gunicorn run:app` work even when the build output was not committed.
+Frontend install/build/check work lives in `build_frontend.py`. `run.py` starts
+the web server immediately and, when needed, launches that tool in the
+background so the site becomes reachable faster. For Render's build phase, use
+`python build_frontend.py --build-only` (still supported via
+`python run.py --build-only` as a thin wrapper).
 """
 
 from __future__ import annotations
 
 import base64
 import os
-import shutil
+import secrets
 import subprocess
 import sys
-import secrets
 import time
-from urllib.parse import urlencode
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
+from urllib.parse import urlencode
 
 import requests
 from flask import Flask, Response, jsonify, make_response, redirect, request, send_from_directory
@@ -29,14 +30,6 @@ from flask_cors import CORS
 BASE_DIR = Path(__file__).resolve().parent
 DIST_DIR = BASE_DIR / "dist"
 INDEX_FILE = DIST_DIR / "index.html"
-PACKAGE_JSON = BASE_DIR / "package.json"
-PACKAGE_LOCK = BASE_DIR / "package-lock.json"
-NODE_MODULES = BASE_DIR / "node_modules"
-NODE_MODULE_BIN = NODE_MODULES / ".bin"
-NODE_VERSION = os.environ.get("NODE_VERSION", "20.20.2")
-NODEENV_DIR = Path(os.environ.get("NODEENV_DIR", str(BASE_DIR / ".nodeenv")))
-NODEENV_BIN = NODEENV_DIR / ("Scripts" if os.name == "nt" else "bin")
-LOCAL_NPM = NODEENV_BIN / ("npm.cmd" if os.name == "nt" else "npm")
 
 DISCORD_API_BASE = os.environ.get("DISCORD_API_BASE", "https://discord.com/api/v10").rstrip("/")
 DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "").strip()
@@ -51,8 +44,107 @@ AUTO_BUILD_FRONTEND = os.environ.get("AUTO_BUILD_FRONTEND", "1").strip().lower()
     "no",
     "off",
 }
+# When dist is missing at import time, kick off a background build instead of
+# blocking Flask/Gunicorn startup. Set BACKGROUND_BUILD=0 to disable spawning.
+BACKGROUND_BUILD = os.environ.get("BACKGROUND_BUILD", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
-_build_error: str | None = None
+# Lazy-imported helpers from build_frontend (status + background spawn).
+_build_helpers_loaded = False
+_read_build_status = None
+_get_build_error = None
+_start_background_build = None
+_ensure_frontend_build = None
+
+
+def _load_build_helpers() -> None:
+    """Import build helpers without failing hard if the module is temporarily broken."""
+    global _build_helpers_loaded, _read_build_status, _get_build_error
+    global _start_background_build, _ensure_frontend_build
+
+    if _build_helpers_loaded:
+        return
+
+    try:
+        from build_frontend import (  # type: ignore
+            ensure_frontend_build,
+            get_build_error,
+            read_build_status,
+            start_background_build,
+        )
+
+        _read_build_status = read_build_status
+        _get_build_error = get_build_error
+        _start_background_build = start_background_build
+        _ensure_frontend_build = ensure_frontend_build
+        _build_helpers_loaded = True
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[startup] warning: could not import build_frontend helpers: {exc}", file=sys.stderr, flush=True)
+        _build_helpers_loaded = False
+
+
+def _status_snapshot() -> dict[str, Any]:
+    _load_build_helpers()
+    if _read_build_status is not None:
+        return _read_build_status()
+    return {
+        "status": "ready" if INDEX_FILE.exists() else "idle",
+        "error": None,
+        "message": None,
+        "frontend_built": INDEX_FILE.exists(),
+    }
+
+
+def _current_build_error() -> str | None:
+    _load_build_helpers()
+    if _get_build_error is not None:
+        return _get_build_error()
+    if not INDEX_FILE.exists():
+        return "Frontend build is missing. Run `python build_frontend.py --build-only`."
+    return None
+
+
+def _kick_background_build(*, force: bool = False, check: bool = False) -> None:
+    """Non-blocking: start build_frontend.py in the background if needed."""
+    if not AUTO_BUILD_FRONTEND and not force:
+        return
+    if not BACKGROUND_BUILD and not force:
+        return
+
+    _load_build_helpers()
+    if _start_background_build is None:
+        # Fallback: spawn the script directly without importing helpers.
+        cmd = [sys.executable, str(BASE_DIR / "build_frontend.py"), "--background"]
+        if force:
+            cmd.append("--force")
+        if check:
+            cmd.append("--check")
+        if INDEX_FILE.exists() and not force:
+            cmd.append("--check-only")
+        try:
+            kwargs: dict[str, Any] = {
+                "cwd": str(BASE_DIR),
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "stdin": subprocess.DEVNULL,
+                "close_fds": os.name != "nt",
+            }
+            if os.name != "nt":
+                kwargs["start_new_session"] = True
+            subprocess.Popen(cmd, **kwargs)
+            print(f"[startup] Spawned background build worker: {' '.join(cmd)}", flush=True)
+        except OSError as exc:
+            print(f"[startup] Failed to spawn background build: {exc}", file=sys.stderr, flush=True)
+        return
+
+    try:
+        _start_background_build(force=force, check=check)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[startup] Background build helper failed: {exc}", file=sys.stderr, flush=True)
 
 
 def _external_base_url() -> str:
@@ -116,129 +208,24 @@ def _cors_origins() -> str | list[str]:
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
 
 
-def _startup_env() -> dict[str, str]:
-    """Environment for npm commands. Force devDependencies for Vite builds."""
-    env = os.environ.copy()
-    extra_path = [str(NODE_MODULE_BIN), str(NODEENV_BIN)]
-    existing_path = env.get("PATH", "")
-    # npm package lifecycle scripts need a POSIX shell. Some hosts provide a very
-    # small PATH during startup, so include common system directories explicitly.
-    fallback_path = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
-    env["PATH"] = os.pathsep.join(extra_path + [existing_path, fallback_path])
-    env["NPM_CONFIG_PRODUCTION"] = "false"
-    env["npm_config_production"] = "false"
-    return env
-
-
-def _run_command(command: list[str], description: str) -> None:
-    """Run a setup command and raise a helpful error if it fails."""
-    print(f"[startup] {description}: {' '.join(command)}", flush=True)
-    try:
-        subprocess.run(command, cwd=BASE_DIR, check=True, env=_startup_env())
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            f"Could not run `{command[0]}`. Make sure Node.js/npm are installed, "
-            "or keep nodeenv in requirements.txt so run.py can install Node automatically."
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"{description} failed with exit code {exc.returncode}.") from exc
-
-
-def _find_npm() -> str | None:
-    """Return an npm executable from env, local nodeenv, or system PATH."""
-    configured = os.environ.get("NPM_BINARY")
-    if configured:
-        configured_path = Path(configured)
-        if configured_path.exists() or shutil.which(configured):
-            return configured
-
-    if LOCAL_NPM.exists():
-        return str(LOCAL_NPM)
-
-    system_npm = shutil.which("npm")
-    if system_npm:
-        return system_npm
-
-    return None
-
-
-def _ensure_npm() -> str:
-    """Ensure npm exists. If needed, install a local Node runtime via nodeenv."""
-    npm = _find_npm()
-    if npm:
-        return npm
-
-    try:
-        import nodeenv  # noqa: F401
-    except ImportError as exc:
-        raise RuntimeError(
-            "npm was not found and nodeenv is not installed. Run `pip install -r requirements.txt` "
-            "after requirements.txt has been updated, then restart the server."
-        ) from exc
-
-    _run_command(
-        [sys.executable, "-m", "nodeenv", "--node", NODE_VERSION, "--prebuilt", str(NODEENV_DIR)],
-        f"Installing local Node.js {NODE_VERSION} runtime",
-    )
-
-    npm = _find_npm()
-    if not npm:
-        raise RuntimeError("nodeenv finished, but npm is still not available.")
-    return npm
-
-
-def ensure_frontend_build(force: bool = False) -> None:
-    """Build the Vite frontend automatically when dist/index.html is missing.
-
-    Pass force=True for deployment/build commands so dist always reflects the
-    current source files.
-    """
-    global _build_error
-
-    if INDEX_FILE.exists() and not force:
-        return
-
-    if not AUTO_BUILD_FRONTEND:
-        _build_error = (
-            "Vite build not found and AUTO_BUILD_FRONTEND is disabled. "
-            "Run `npm install && npm run build`, or set AUTO_BUILD_FRONTEND=1."
-        )
-        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
-        return
-
-    if not PACKAGE_JSON.exists():
-        _build_error = f"Cannot build frontend because {PACKAGE_JSON.name} was not found."
-        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
-        return
-
-    try:
-        npm = _ensure_npm()
-
-        # Always run install when the build is missing. This fixes stale or production-only
-        # node_modules folders where devDependencies such as Vite are absent, which causes
-        # `npm run build` to fail with exit code 127.
-        install_command = [npm, "ci", "--include=dev"] if PACKAGE_LOCK.exists() else [npm, "install", "--include=dev"]
-        _run_command(install_command, "Installing frontend dependencies")
-
-        _run_command([npm, "run", "build"], "Building frontend")
-    except RuntimeError as exc:
-        _build_error = str(exc)
-        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
-        return
-
-    if INDEX_FILE.exists():
-        _build_error = None
-        print(f"[startup] Frontend build ready: {INDEX_FILE}", flush=True)
-    else:
-        _build_error = "Frontend build command completed, but dist/index.html was not created."
-        print(f"[startup] {_build_error}", file=sys.stderr, flush=True)
-
-
-# Build during import for `gunicorn run:app`, where the __main__ block is not
-# executed. Skip here for `python run.py --build-only` so it does one forced
-# build in the __main__ block instead of building twice.
+# ---------------------------------------------------------------------------
+# Fast startup: never block import on npm install / vite build.
+# If dist is already present, optionally run light checks in the background.
+# If dist is missing, spawn build_frontend.py in the background and keep going.
+# ---------------------------------------------------------------------------
 if "--build-only" not in sys.argv:
-    ensure_frontend_build()
+    if INDEX_FILE.exists():
+        print(f"[startup] Frontend present: {INDEX_FILE} (server starting immediately)", flush=True)
+        # Optional non-blocking health/tool checks in the background.
+        if BACKGROUND_BUILD and AUTO_BUILD_FRONTEND:
+            _kick_background_build(force=False, check=True)
+    else:
+        print(
+            "[startup] dist/index.html missing — starting server immediately and "
+            "building frontend in the background via build_frontend.py",
+            flush=True,
+        )
+        _kick_background_build(force=False, check=True)
 
 app = Flask(__name__, static_folder=None)
 CORS(app, resources={r"/api/*": {"origins": _cors_origins()}})
@@ -314,11 +301,15 @@ def _select_response_headers(headers: Iterable[tuple[str, str]]) -> dict[str, st
 
 
 @app.get("/healthz")
-def healthz() -> tuple[dict[str, str | bool | None], int]:
+def healthz() -> tuple[dict[str, Any], int]:
+    status = _status_snapshot()
     return {
         "status": "ok",
         "frontendBuilt": INDEX_FILE.exists(),
-        "buildError": _build_error,
+        "buildStatus": status.get("status"),
+        "buildError": _current_build_error(),
+        "buildMessage": status.get("message"),
+        "backgroundBuild": BACKGROUND_BUILD,
     }, 200
 
 
@@ -373,7 +364,13 @@ def discord_oauth_callback():
     except ValueError:
         state_age = OAUTH_STATE_MAX_AGE + 1
 
-    if not code or not state or not saved_state or not secrets.compare_digest(state, saved_state) or state_age > OAUTH_STATE_MAX_AGE:
+    if (
+        not code
+        or not state
+        or not saved_state
+        or not secrets.compare_digest(state, saved_state)
+        or state_age > OAUTH_STATE_MAX_AGE
+    ):
         response = redirect("/?oauth_error=invalid_state")
         return _clear_state_cookies(response)
 
@@ -393,7 +390,7 @@ def discord_oauth_callback():
         token_data = token_response.json()
         access_token = token_data["access_token"]
     except Exception as exc:
-        response = redirect(f"/?oauth_error=token_exchange_failed")
+        response = redirect("/?oauth_error=token_exchange_failed")
         print(f"[oauth] token exchange failed: {exc}", file=sys.stderr, flush=True)
         return _clear_state_cookies(response)
 
@@ -433,33 +430,70 @@ def serve_spa(path: str):
     if path.startswith("api/"):
         return jsonify({"message": "Not found"}), 404
 
+    # If the build is still running in the background, keep the worker alive and
+    # return a temporary page instead of blocking the request on npm/vite.
     if not INDEX_FILE.exists():
-        ensure_frontend_build()
+        status = _status_snapshot()
+        build_state = str(status.get("status") or "idle")
+        if build_state not in {"building", "checking"}:
+            _kick_background_build(force=False, check=True)
+            status = _status_snapshot()
+            build_state = str(status.get("status") or "building")
+
+        error = _current_build_error()
+        if build_state == "error" or error:
+            return (
+                "Frontend build failed or is missing.\n"
+                f"{error or 'Run `python build_frontend.py --build-only` and restart the server.'}\n",
+                500,
+                {"Content-Type": "text/plain; charset=utf-8"},
+            )
+
+        # Non-blocking wait page while the background worker finishes.
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta http-equiv='refresh' content='3'>"
+            "<title>Building frontend…</title>"
+            "<style>body{font-family:system-ui,sans-serif;background:#313338;color:#f2f3f5;"
+            "display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}"
+            ".card{max-width:28rem;padding:2rem;background:#2b2d31;border-radius:12px;"
+            "box-shadow:0 8px 24px rgba(0,0,0,.35)}h1{font-size:1.25rem;margin:0 0 .75rem}"
+            "p{margin:.4rem 0;line-height:1.45;color:#b5bac1}code{color:#dbdee1}</style>"
+            "</head><body><div class='card'>"
+            "<h1>Building frontend…</h1>"
+            "<p>The web server started immediately. "
+            "<code>build_frontend.py</code> is installing/building the Vite app in the background.</p>"
+            "<p>This page refreshes automatically. Status: "
+            f"<code>{build_state}</code></p>"
+            "<p>Health: <a href='/healthz' style='color:#00a8fc'>/healthz</a></p>"
+            "</div></body></html>",
+            503,
+            {"Content-Type": "text/html; charset=utf-8", "Retry-After": "3"},
+        )
 
     requested = DIST_DIR / path
     if path and requested.is_file():
         return send_from_directory(DIST_DIR, path)
 
-    if INDEX_FILE.exists():
-        return send_from_directory(DIST_DIR, "index.html")
-
-    return (
-        "Frontend build failed or is missing. "
-        f"{_build_error or 'Run `npm install && npm run build` and restart the server.'}",
-        500,
-        {"Content-Type": "text/plain; charset=utf-8"},
-    )
+    return send_from_directory(DIST_DIR, "index.html")
 
 
 if __name__ == "__main__":
+    # Backwards-compatible wrapper: delegate forced builds to build_frontend.py
+    # so Render / docs that still call `python run.py --build-only` keep working.
     if "--build-only" in sys.argv:
-        ensure_frontend_build(force=True)
-        if INDEX_FILE.exists() and _build_error is None:
-            print("[startup] Build-only check completed successfully.", flush=True)
-            raise SystemExit(0)
-        print(f"[startup] Build-only check failed: {_build_error}", file=sys.stderr, flush=True)
-        raise SystemExit(1)
+        print(
+            "[startup] Delegating --build-only to build_frontend.py "
+            "(prefer: python build_frontend.py --build-only)",
+            flush=True,
+        )
+        result = subprocess.run(
+            [sys.executable, str(BASE_DIR / "build_frontend.py"), "--build-only", "--check"],
+            cwd=str(BASE_DIR),
+        )
+        raise SystemExit(result.returncode)
 
     port = int(os.environ.get("PORT", "8000"))
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    print(f"[startup] Starting Flask on 0.0.0.0:{port} (frontend build never blocks startup)", flush=True)
     app.run(host="0.0.0.0", port=port, debug=debug)

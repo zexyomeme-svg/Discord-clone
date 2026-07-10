@@ -166,4 +166,7 @@ export interface UserSettings {
   language: LanguageCode;
   inputDevice: string;
   outputDevice: string;
+  localDisplayName: string;
+  localBannerColor: string;
+  localBio: string;
 }

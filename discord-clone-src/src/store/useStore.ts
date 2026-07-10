@@ -22,6 +22,9 @@ const DEFAULT_SETTINGS: UserSettings = {
   language: 'en-US',
   inputDevice: 'default',
   outputDevice: 'default',
+  localDisplayName: '',
+  localBannerColor: '#5865f2',
+  localBio: '',
 };
 
 
@@ -55,6 +58,59 @@ function loadSettings(): UserSettings {
   return DEFAULT_SETTINGS;
 }
 
+
+function escapeNotificationText(value: string) {
+  return (value || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function playNotificationTone(settings: UserSettings) {
+  if (!settings.messageSound && !settings.notificationSounds) return;
+  try {
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return;
+    const ctx = new AudioContextCtor();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 740;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.045, ctx.currentTime + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.18);
+    setTimeout(() => ctx.close?.(), 350);
+  } catch { /* browsers may block audio until user interaction */ }
+}
+
+function showDesktopNotification(message: Message, state: Pick<AppState, 'userSettings' | 'channels' | 'guilds' | 'selectedGuildId'>) {
+  if (!state.userSettings.desktopNotifications) return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  try {
+    const author = message.author.global_name || message.author.username || 'Discord';
+    const channel = Object.values(state.channels).flat().find((ch) => ch.id === message.channel_id);
+    const title = channel?.name ? `${author} in #${channel.name}` : author;
+    const body = escapeNotificationText(message.content) || (message.attachments?.length ? `${message.attachments.length} attachment(s)` : 'New message');
+    const notification = new Notification(title, {
+      body,
+      icon: api.getUserAvatarUrl(message.author.id, message.author.avatar, message.author.discriminator),
+      tag: `disclone-${message.channel_id}`,
+      silent: true,
+    });
+    notification.onclick = () => window.focus();
+  } catch { /* ignore notification failures */ }
+}
+
+function notifyForIncomingMessage(message: Message, state: AppState) {
+  const isOwnMessage = state.user?.id === message.author?.id;
+  if (isOwnMessage) return;
+  const awayFromChannel = state.selectedChannelId !== message.channel_id || (typeof document !== 'undefined' && document.hidden);
+  if (!awayFromChannel) return;
+  playNotificationTone(state.userSettings);
+  showDesktopNotification(message, state);
+}
+
 interface AppState {
   token: string | null;
   authMode: AuthMode;
@@ -82,6 +138,7 @@ interface AppState {
   hasMoreMessages: Record<string, boolean>;
   isSendingMessages: Record<string, boolean>;
   isLoadingChannels: boolean;
+  unreadCounts: Record<string, number>;
 
   // Settings
   settingsOpen: boolean;
@@ -99,6 +156,7 @@ interface AppState {
   selectGuild: (guildId: string) => Promise<void>;
   selectChannel: (channelId: string) => Promise<void>;
   selectDMChannel: (channelId: string) => Promise<void>;
+  createDMChannel: (recipientId: string) => Promise<void>;
   loadMessages: (channelId: string) => Promise<void>;
   loadMoreMessages: (channelId: string) => Promise<void>;
   sendMessage: (channelId: string, content: string, files?: File[]) => Promise<void>;
@@ -111,6 +169,7 @@ interface AppState {
   closeSettings: () => void;
   setSettingsPage: (page: SettingsPage) => void;
   updateSettings: (partial: Partial<UserSettings>) => void;
+  clearUnread: (channelId: string) => void;
 }
 
 const useStore = create<AppState>((set, get) => ({
@@ -137,6 +196,7 @@ const useStore = create<AppState>((set, get) => ({
   hasMoreMessages: {},
   isSendingMessages: {},
   isLoadingChannels: false,
+  unreadCounts: {},
   settingsOpen: false,
   settingsPage: 'my-account',
   userSettings: loadSettings(),
@@ -161,22 +221,38 @@ const useStore = create<AppState>((set, get) => ({
             const state = get();
             const chId = data.channel_id;
             const current = state.messages[chId];
+            const isOwnMessage = state.user?.id === data.author?.id;
+            const shouldMarkUnread = !isOwnMessage && state.userSettings.unreadBadge && (state.selectedChannelId !== chId || (typeof document !== 'undefined' && document.hidden));
+            const patch: Partial<AppState> = {};
+
+            if (current) {
+              if (current.some((m: Message) => m.id === data.id)) {
+                patch.messages = { ...state.messages, [chId]: mergeMessagesUnique(current.map((m: Message) => m.id === data.id ? data : m)) };
+              } else {
+                const pendingIndex = current.findIndex((m: Message) => isMatchingPendingMessage(m, data));
+                if (pendingIndex >= 0) {
+                  const next = [...current];
+                  next[pendingIndex] = data;
+                  patch.messages = { ...state.messages, [chId]: mergeMessagesUnique(next) };
+                } else {
+                  patch.messages = { ...state.messages, [chId]: mergeMessagesUnique([...current, data]) };
+                }
+              }
+            }
+
+            if (shouldMarkUnread) {
+              patch.unreadCounts = { ...state.unreadCounts, [chId]: (state.unreadCounts[chId] || 0) + 1 };
+            }
+
+            if (Object.keys(patch).length > 0) set(patch);
+            notifyForIncomingMessage(data, state);
+          },
+          onMessageUpdate: (data: Message) => {
+            const state = get();
+            const chId = data.channel_id;
+            const current = state.messages[chId];
             if (!current) return;
-
-            if (current.some((m: Message) => m.id === data.id)) {
-              set({ messages: { ...state.messages, [chId]: mergeMessagesUnique(current.map((m: Message) => m.id === data.id ? data : m)) } });
-              return;
-            }
-
-            const pendingIndex = current.findIndex((m: Message) => isMatchingPendingMessage(m, data));
-            if (pendingIndex >= 0) {
-              const next = [...current];
-              next[pendingIndex] = data;
-              set({ messages: { ...state.messages, [chId]: mergeMessagesUnique(next) } });
-              return;
-            }
-
-            set({ messages: { ...state.messages, [chId]: mergeMessagesUnique([...current, data]) } });
+            set({ messages: { ...state.messages, [chId]: mergeMessagesUnique(current.map((m: Message) => m.id === data.id ? { ...m, ...data } : m)) } });
           },
           onMessageDelete: (data) => {
             const state = get();
@@ -249,7 +325,7 @@ const useStore = create<AppState>((set, get) => ({
     localStorage.removeItem('discord_token');
     localStorage.removeItem('discord_oauth_access_token');
     localStorage.removeItem('discord_auth_mode');
-    set({ token: null, authMode: 'bot', user: null, guilds: [], channels: {}, messages: {}, members: {}, roles: {}, dmChannels: [], selectedGuildId: null, selectedChannelId: null, gateway: null, settingsOpen: false });
+    set({ token: null, authMode: 'bot', user: null, guilds: [], channels: {}, messages: {}, members: {}, roles: {}, dmChannels: [], selectedGuildId: null, selectedChannelId: null, gateway: null, settingsOpen: false, unreadCounts: {} });
   },
 
   setViewMode: (mode: ViewMode) => set({ viewMode: mode }),
@@ -278,13 +354,33 @@ const useStore = create<AppState>((set, get) => ({
   },
 
   selectChannel: async (channelId: string) => {
-    set({ selectedChannelId: channelId });
+    set({ selectedChannelId: channelId, unreadCounts: { ...get().unreadCounts, [channelId]: 0 } });
     await get().loadMessages(channelId);
   },
 
   selectDMChannel: async (channelId: string) => {
-    set({ selectedChannelId: channelId, selectedGuildId: null, viewMode: 'dms' });
+    set({ selectedChannelId: channelId, selectedGuildId: null, viewMode: 'dms', unreadCounts: { ...get().unreadCounts, [channelId]: 0 } });
     await get().loadMessages(channelId);
+  },
+
+  createDMChannel: async (recipientId: string) => {
+    const { token, authMode } = get();
+    const cleanId = recipientId.trim();
+    if (!token || authMode !== 'bot' || !cleanId) return;
+    if (!/^\d{15,25}$/.test(cleanId)) {
+      const msg = 'Enter a valid Discord user ID to start a DM.';
+      set({ error: msg });
+      throw new Error(msg);
+    }
+    try {
+      const channel = await api.createDM(token, cleanId);
+      const existing = get().dmChannels.filter((ch) => ch.id !== channel.id);
+      set({ dmChannels: [channel, ...existing], viewMode: 'dms', error: null });
+      await get().selectDMChannel(channel.id);
+    } catch (err: any) {
+      set({ error: err.message || 'Failed to create DM channel' });
+      throw err;
+    }
   },
 
   loadMessages: async (channelId: string) => {
@@ -296,6 +392,7 @@ const useStore = create<AppState>((set, get) => ({
       set({
         messages: { ...get().messages, [channelId]: mergeMessagesUnique((msgs || []).reverse()) },
         hasMoreMessages: { ...get().hasMoreMessages, [channelId]: (msgs || []).length === 50 },
+        unreadCounts: { ...get().unreadCounts, [channelId]: 0 },
         isLoadingMessages: false,
       });
     } catch (err: any) {
@@ -382,6 +479,7 @@ const useStore = create<AppState>((set, get) => ({
           ),
         },
       });
+      if (get().userSettings.messageSound) playNotificationTone(get().userSettings);
     } catch (err: any) {
       set({
         isSendingMessages: { ...get().isSendingMessages, [channelId]: false },
@@ -421,6 +519,7 @@ const useStore = create<AppState>((set, get) => ({
     set({ userSettings: updated });
     localStorage.setItem('disclone_settings', JSON.stringify(updated));
   },
+  clearUnread: (channelId) => set({ unreadCounts: { ...get().unreadCounts, [channelId]: 0 } }),
 }));
 
 export default useStore;

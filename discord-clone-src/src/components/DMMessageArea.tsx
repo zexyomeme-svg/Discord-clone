@@ -38,8 +38,9 @@ function DateDivider({ date }: { date: Date }) {
 }
 
 const MsgRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }: { message: Message; isGrouped: boolean; fontSize: number; spacing: number; compactMode: boolean }) => {
-  const { token, authMode, setError } = useStore();
+  const { token, authMode, setError, userSettings } = useStore();
   const av = getUserAvatarUrl(message.author.id, message.author.avatar, message.author.discriminator);
+  const authorName = userSettings.streamerMode ? 'Hidden User' : (message.author.global_name || message.author.username);
   return (
     <div className={`group message-hover relative flex px-4 ${isGrouped ? 'py-[2px]' : 'pt-[2px]'}`} style={{ marginTop: isGrouped ? undefined : `${compactMode ? 4 : spacing}px` }}>
       <div className="msg-actions flex bg-discord-channel border border-discord-border rounded shadow-md">
@@ -58,7 +59,7 @@ const MsgRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }: { m
       <div className="flex-1 min-w-0">
         {!isGrouped && (
           <div className="flex items-baseline gap-1 leading-[22px]">
-            <span className="font-medium text-white hover:underline cursor-pointer">{message.author.global_name || message.author.username}</span>
+            <span className="font-medium text-white hover:underline cursor-pointer">{authorName}</span>
             {message.author.bot && <span className="bg-discord-blurple text-white text-[10px] font-medium px-[5px] py-[1px] rounded uppercase ml-0.5">Bot</span>}
             <span className="text-xs text-discord-text-muted ml-1">{fmtTs(message.timestamp)}</span>
           </div>
@@ -97,12 +98,22 @@ export default function DMMessageArea() {
   const { selectedChannelId, dmChannels, messages, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, userSettings } = useStore();
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
   const msgs = selectedChannelId ? messages[selectedChannelId] || [] : [];
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const shownMessages = normalizedSearch
+    ? msgs.filter((msg) =>
+      (msg.content || '').toLowerCase().includes(normalizedSearch)
+      || (msg.author?.username || '').toLowerCase().includes(normalizedSearch)
+      || (msg.author?.global_name || '').toLowerCase().includes(normalizedSearch)
+      || msg.attachments?.some((att) => att.filename.toLowerCase().includes(normalizedSearch))
+    )
+    : msgs;
   const ch = dmChannels.find(c => c.id === selectedChannelId);
   const r = ch?.recipients?.[0];
   const rName = r?.global_name || r?.username || 'Unknown';
@@ -134,7 +145,7 @@ export default function DMMessageArea() {
       <div className="h-12 px-3 flex items-center justify-between border-b border-discord-darker/70 shadow-sm flex-shrink-0">
         <div className="flex items-center gap-2"><AtSign size={20} className="text-discord-text-muted" /><h3 className="font-semibold text-white text-[15px]">{rName}</h3></div>
         <div className="flex items-center gap-3">
-          <div className="relative"><input type="text" placeholder="Search" className="w-[140px] focus:w-[200px] bg-discord-dark text-discord-text text-sm rounded h-[24px] px-1.5 outline-none placeholder:text-discord-text-muted transition-all" /><Search size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-discord-text-muted pointer-events-none" /></div>
+          <div className="relative"><input type="text" data-app-search="true" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search" className="w-[140px] focus:w-[200px] bg-discord-dark text-discord-text text-sm rounded h-[24px] px-1.5 outline-none placeholder:text-discord-text-muted transition-all" /><Search size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-discord-text-muted pointer-events-none" /></div>
         </div>
       </div>
 
@@ -147,8 +158,9 @@ export default function DMMessageArea() {
         ) : (
           <>
             <DMWelcome channel={ch} />
-            {msgs.map((msg, i) => {
-              const prev = i > 0 ? msgs[i-1] : null;
+            {normalizedSearch && <div className="px-4 py-2 text-xs text-discord-text-muted">Showing {shownMessages.length} result{shownMessages.length === 1 ? '' : 's'} for “{searchQuery}”.</div>}
+            {shownMessages.map((msg, i) => {
+              const prev = i > 0 ? shownMessages[i-1] : null;
               const grouped = prev ? shouldGroup(prev, msg) : false;
               const dd = !prev || !isSameDay(new Date(prev.timestamp), new Date(msg.timestamp));
               return <div key={msg.id}>{dd && <DateDivider date={new Date(msg.timestamp)} />}<MsgRow message={msg} isGrouped={grouped && !dd} fontSize={userSettings.fontSize} spacing={userSettings.messageGroupSpacing} compactMode={userSettings.compactMode} /></div>;
@@ -176,8 +188,8 @@ export default function DMMessageArea() {
       <form onSubmit={handleSend} className="px-4 pb-6 flex-shrink-0">
         <div className="bg-discord-input rounded-lg flex items-end">
           <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { const selected = Array.from(e.target.files || []); setFiles((prev) => [...prev, ...selected].slice(0, 10)); e.currentTarget.value = ''; }} />
-          <button type="button" onClick={() => fileInputRef.current?.click()} title="Upload files" className="p-[10px] text-discord-text-muted hover:text-discord-text transition-colors flex-shrink-0"><PlusCircle size={22} /></button>
-          <textarea value={input} onChange={e => setInput(e.target.value)} disabled={isSending}
+          <button type="button" data-upload-trigger="true" onClick={() => fileInputRef.current?.click()} title="Upload files" className="p-[10px] text-discord-text-muted hover:text-discord-text transition-colors flex-shrink-0"><PlusCircle size={22} /></button>
+          <textarea data-message-input="true" value={input} onChange={e => setInput(e.target.value)} disabled={isSending}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
             placeholder={isSending ? 'Sending...' : `Message @${rName}`}
             className="flex-1 bg-transparent text-discord-text py-[10px] outline-none resize-none max-h-[50vh] placeholder:text-discord-text-muted leading-[22px]"

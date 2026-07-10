@@ -7,6 +7,7 @@ export default function UserPanel() {
   if (!user) return null;
   const avatarUrl = getUserAvatarUrl(user.id, user.avatar, user.discriminator);
   const { isMuted, isDeafened } = userSettings;
+  const displayName = userSettings.localDisplayName || user.global_name || user.username;
 
   return (
     <div className="h-[52px] bg-discord-darker/60 px-2 flex items-center gap-1 flex-shrink-0">
@@ -18,7 +19,7 @@ export default function UserPanel() {
           <div className={`absolute -bottom-0.5 -right-0.5 w-[14px] h-[14px] rounded-full border-[3px] border-[#232428] ${isDeafened || isMuted ? 'bg-discord-text-muted' : 'bg-discord-green'}`} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold text-white truncate leading-[18px]">{user.global_name || user.username}</p>
+          <p className="text-[13px] font-semibold text-white truncate leading-[18px]">{displayName}</p>
           <p className="text-[11px] text-discord-text-muted truncate leading-[13px]">{isDeafened ? 'Deafened' : isMuted ? 'Muted' : 'Online'}</p>
         </div>
       </button>

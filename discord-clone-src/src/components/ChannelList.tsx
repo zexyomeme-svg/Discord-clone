@@ -1,5 +1,5 @@
 import { useState, memo } from 'react';
-import { Hash, Volume2, ChevronDown, ChevronRight, Plus, Megaphone, Lock, Video, Settings } from 'lucide-react';
+import { Hash, Volume2, ChevronDown, ChevronRight, Megaphone, Lock, Video } from 'lucide-react';
 import useStore from '../store/useStore';
 import type { Channel } from '../store/types';
 
@@ -13,7 +13,7 @@ function getChannelIcon(type: number, size = 18) {
   }
 }
 
-const ChannelItem = memo(({ channel, isSelected, onClick }: { channel: Channel; isSelected: boolean; onClick: () => void }) => {
+const ChannelItem = memo(({ channel, isSelected, unreadCount, showUnread, onClick }: { channel: Channel; isSelected: boolean; unreadCount?: number; showUnread?: boolean; onClick: () => void }) => {
   const isClickable = [0, 5, 15].includes(channel.type);
   return (
     <button onClick={isClickable ? onClick : undefined}
@@ -24,14 +24,14 @@ const ChannelItem = memo(({ channel, isSelected, onClick }: { channel: Channel; 
         {channel.nsfw ? <Lock size={18} /> : getChannelIcon(channel.type)}
       </span>
       <span className="truncate flex-1 text-left text-[15px] leading-5">{channel.name}</span>
-      <div className={`flex items-center gap-0.5 flex-shrink-0 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
-        <Settings size={14} className="text-discord-text-muted hover:text-discord-text" />
-      </div>
+      {showUnread && Boolean(unreadCount) && (
+        <span className="min-w-5 h-5 px-1 rounded-full bg-discord-red text-white text-[11px] font-bold flex items-center justify-center">{unreadCount! > 99 ? '99+' : unreadCount}</span>
+      )}
     </button>
   );
 });
 
-function CategorySection({ name, channels, selectedChannelId, onSelectChannel }: { name: string; channels: Channel[]; selectedChannelId: string | null; onSelectChannel: (id: string) => void }) {
+function CategorySection({ name, channels, selectedChannelId, unreadCounts, showUnread, onSelectChannel }: { name: string; channels: Channel[]; selectedChannelId: string | null; unreadCounts: Record<string, number>; showUnread: boolean; onSelectChannel: (id: string) => void }) {
   const [collapsed, setCollapsed] = useState(false);
   return (
     <div className="mt-4 first:mt-0">
@@ -39,12 +39,11 @@ function CategorySection({ name, channels, selectedChannelId, onSelectChannel }:
         className="flex items-center gap-0.5 w-full pl-0.5 pr-1 py-[6px] text-xs font-bold text-discord-text-muted uppercase tracking-[0.02em] hover:text-discord-text transition-colors group">
         {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
         <span className="truncate">{name}</span>
-        <Plus size={16} className="ml-auto opacity-0 group-hover:opacity-100 text-discord-text-muted hover:text-discord-text transition-all" />
       </button>
       {!collapsed && (
         <div className="space-y-px ml-0.5">
           {channels.map(ch => (
-            <ChannelItem key={ch.id} channel={ch} isSelected={selectedChannelId === ch.id} onClick={() => onSelectChannel(ch.id)} />
+            <ChannelItem key={ch.id} channel={ch} isSelected={selectedChannelId === ch.id} unreadCount={unreadCounts[ch.id]} showUnread={showUnread} onClick={() => onSelectChannel(ch.id)} />
           ))}
         </div>
       )}
@@ -53,7 +52,7 @@ function CategorySection({ name, channels, selectedChannelId, onSelectChannel }:
 }
 
 export default function ChannelList() {
-  const { guilds, selectedGuildId, channels, selectedChannelId, selectChannel, isLoadingChannels, setError } = useStore();
+  const { guilds, selectedGuildId, channels, selectedChannelId, selectChannel, isLoadingChannels, setError, unreadCounts, userSettings } = useStore();
   const guild = guilds.find(g => g.id === selectedGuildId);
   const guildChannels = selectedGuildId ? channels[selectedGuildId] || [] : [];
 
@@ -65,7 +64,7 @@ export default function ChannelList() {
   return (
     <div className="w-[240px] bg-discord-sidebar flex flex-col flex-shrink-0 h-full min-h-0">
       {/* Server header */}
-      <button onClick={() => setError('Server menu actions are not implemented yet.')} className="h-12 px-4 flex items-center justify-between border-b border-discord-darker/70 shadow-sm hover:bg-discord-hover transition-colors flex-shrink-0">
+      <button onClick={() => setError(`Server: ${guild?.name || 'Server'} • ${guildChannels.length} channels loaded.`)} className="h-12 px-4 flex items-center justify-between border-b border-discord-darker/70 shadow-sm hover:bg-discord-hover transition-colors flex-shrink-0">
         <h2 className="font-semibold text-white truncate text-[15px]">{guild?.name || 'Server'}</h2>
         <ChevronDown size={18} className="text-discord-text-muted flex-shrink-0" />
       </button>
@@ -84,14 +83,14 @@ export default function ChannelList() {
         ) : (
           <>
             {categories.get(null)?.map(ch => (
-              <ChannelItem key={ch.id} channel={ch} isSelected={selectedChannelId === ch.id} onClick={() => selectChannel(ch.id)} />
+              <ChannelItem key={ch.id} channel={ch} isSelected={selectedChannelId === ch.id} unreadCount={unreadCounts[ch.id]} showUnread={userSettings.unreadBadge} onClick={() => selectChannel(ch.id)} />
             ))}
             {categoryChannels.sort((a, b) => (a.position || 0) - (b.position || 0)).map(cat => {
               const items = categories.get(cat.id) || [];
               if (!items.length) return null;
               return (
                 <CategorySection key={cat.id} name={cat.name || 'Unknown'} selectedChannelId={selectedChannelId}
-                  channels={items.sort((a, b) => (a.position || 0) - (b.position || 0))} onSelectChannel={selectChannel} />
+                  channels={items.sort((a, b) => (a.position || 0) - (b.position || 0))} unreadCounts={unreadCounts} showUnread={userSettings.unreadBadge} onSelectChannel={selectChannel} />
               );
             })}
           </>
