@@ -81,13 +81,20 @@ jobs:
       - name: Smoke-test the running container
         run: |
           python3 - <<'PY'
-          import json, sys, urllib.request
+          import json, sys, urllib.error, urllib.request
 
           BASE = "http://127.0.0.1:8080"
 
           def get(path):
-              with urllib.request.urlopen(BASE + path, timeout=15) as r:
-                  return r.status, r.read().decode("utf-8")
+              # urlopen raises HTTPError on any non-2xx, so an expected 502 from
+              # the tokenless proxy would abort the script instead of reaching
+              # the assertion below. Return the status and body like any other
+              # response.
+              try:
+                  with urllib.request.urlopen(BASE + path, timeout=15) as r:
+                      return r.status, r.read().decode("utf-8")
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read().decode("utf-8", "replace")
 
           failures = []
 
@@ -117,7 +124,7 @@ jobs:
 
           status, body = get("/")
           if status != 200:
-              failures.append("SPA status %s" % status)
+              failures.append("SPA status %s: %s" % (status, body[:300]))
           if "id=" not in body or "root" not in body:
               failures.append("SPA index.html does not look like the built bundle")
           if len(body) < 100_000:
