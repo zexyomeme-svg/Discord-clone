@@ -639,3 +639,195 @@ def test_secret_key_file_is_gitignored():
     app_ignore = (SRC_DIR / ".gitignore").read_text(encoding="utf-8")
     combined = root_ignore + app_ignore
     assert ".flask_secret_key" in combined or ".env" in combined
+
+
+# ---------------------------------------------------------------------------
+# GET /api/app-info — attribution for the UI and the bot's Discord presence
+# ---------------------------------------------------------------------------
+
+APP_INFO_KEYS = {
+    "name",
+    "version",
+    "githubUrl",
+    "siteUrl",
+    "githubDisplay",
+    "siteDisplay",
+    "presenceText",
+    "presenceEditable",
+}
+
+
+def test_app_info_reports_the_documented_shape(client):
+    run, c = client
+    res = c.get("/api/app-info")
+    assert res.status_code == 200
+    assert set(res.get_json()) == APP_INFO_KEYS
+
+
+def test_app_info_defaults_point_at_the_real_repository_and_deployment(client):
+    run, c = client
+    body = res_body = c.get("/api/app-info").get_json()
+    assert body["githubUrl"] == "https://github.com/zexyomeme-svg/Discord-clone"
+    assert body["siteUrl"] == "https://discord-clone-render.onrender.com"
+    assert body["presenceEditable"] is True
+    assert res_body["version"] == run.APP_VERSION
+
+
+def test_display_urls_strip_the_scheme_for_text_only_contexts(client):
+    run, c = client
+    body = c.get("/api/app-info").get_json()
+    assert body["githubDisplay"] == "github.com/zexyomeme-svg/Discord-clone"
+    assert body["siteDisplay"] == "discord-clone-render.onrender.com"
+
+
+def test_display_urls_strip_a_trailing_slash(make_app):
+    run = make_app({"APP_GITHUB_URL": "https://github.com/o/r/"})
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["githubDisplay"] == "github.com/o/r"
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"APP_NAME": "Renamed"},
+        {"APP_VERSION": "9.9.9"},
+        {"APP_GITHUB_URL": "https://github.com/someone/else"},
+        {"APP_SITE_URL": "https://example.com"},
+    ],
+)
+def test_app_info_is_configurable_from_the_environment(make_app, env):
+    """Every field must be overridable at runtime, without a rebuild."""
+    run = make_app(env)
+    body = run.app.test_client().get("/api/app-info").get_json()
+    value = next(iter(env.values()))
+    assert value in body.values() or any(
+        isinstance(v, str) and v.startswith(value.rstrip("/").replace("https://", ""))
+        for v in body.values()
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "javascript:alert(1)",
+        "JaVaScRiPt:alert(1)",
+        "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+        "file:///etc/passwd",
+        "vbscript:msgbox(1)",
+        "//evil.example/no-scheme",
+        "https://",
+        "https://github.com@evil.example/zexyomeme-svg/Discord-clone",
+        "https://user:pass@github.com/o/r",
+    ],
+)
+def test_unsafe_urls_are_never_published_as_hrefs(make_app, url):
+    """These become `href`s in the browser, so a bad env value is an XSS vector."""
+    run = make_app({"APP_GITHUB_URL": url, "APP_SITE_URL": ""})
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["githubUrl"] is None
+    assert body["githubDisplay"] is None
+    assert "javascript" not in json.dumps(body).lower()
+
+
+def test_safe_urls_survive_validation(make_app):
+    run = make_app(
+        {
+            "APP_GITHUB_URL": "https://github.com/o/r",
+            "APP_SITE_URL": "http://127.0.0.1:8000",
+        }
+    )
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["githubUrl"] == "https://github.com/o/r"
+    assert body["siteUrl"] == "http://127.0.0.1:8000"
+
+
+def test_site_url_falls_back_to_public_base_url(make_app):
+    """A fork that configured OAuth advertises its own site, not this one.
+
+    PUBLIC_BASE_URL is already required to be the public address of the service,
+    so it is the best available default and keeps the two from disagreeing.
+    """
+    run = make_app({"PUBLIC_BASE_URL": "https://my-fork.onrender.com"})
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["siteUrl"] == "https://my-fork.onrender.com"
+    assert body["siteDisplay"] == "my-fork.onrender.com"
+    assert "discord-clone-render.onrender.com" not in body["presenceText"]
+
+
+def test_explicit_site_url_beats_public_base_url(make_app):
+    run = make_app(
+        {
+            "PUBLIC_BASE_URL": "https://backend.internal",
+            "APP_SITE_URL": "https://public-site.example",
+        }
+    )
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["siteUrl"] == "https://public-site.example"
+
+
+def test_presence_text_names_the_repo_and_the_deployment(client):
+    run, c = client
+    text = c.get("/api/app-info").get_json()["presenceText"]
+    assert text == (
+        "Disclone · github.com/zexyomeme-svg/Discord-clone"
+        " · discord-clone-render.onrender.com"
+    )
+    assert len(text) <= run.PRESENCE_TEXT_MAX
+
+
+def test_presence_text_drops_the_site_when_both_would_not_fit(make_app):
+    """The repo is the thing being promoted, so it loses the site, not itself."""
+    long_path = "a" * 70
+    run = make_app(
+        {
+            "APP_GITHUB_URL": f"https://github.com/{long_path}",
+            "APP_SITE_URL": "https://example.com",
+        }
+    )
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["presenceText"] == f"Disclone · github.com/{long_path}"
+    assert "example.com" not in body["presenceText"]
+    assert len(body["presenceText"]) <= run.PRESENCE_TEXT_MAX
+
+
+@pytest.mark.parametrize("extra", ["", "x" * 50, "x" * 500])
+def test_presence_text_never_exceeds_the_activity_state_limit(make_app, extra):
+    """Discord's activity `state` is capped; the bot must not send more."""
+    run = make_app(
+        {
+            "APP_NAME": "Disclone" + extra,
+            "APP_GITHUB_URL": "https://github.com/o/r",
+            "APP_SITE_URL": "https://example.com",
+        }
+    )
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert len(body["presenceText"]) <= run.PRESENCE_TEXT_MAX
+
+
+def test_explicit_presence_text_pins_the_status(make_app):
+    run = make_app({"APP_PRESENCE_TEXT": "Handwritten status"})
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["presenceText"] == "Handwritten status"
+    assert body["presenceEditable"] is False
+
+
+def test_explicit_presence_text_is_still_truncated(make_app):
+    run = make_app({"APP_PRESENCE_TEXT": "y" * 300})
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["presenceText"] == "y" * run.PRESENCE_TEXT_MAX
+    assert len(body["presenceText"]) == run.PRESENCE_TEXT_MAX
+
+
+def test_presence_text_is_empty_when_the_repo_url_is_unusable(make_app):
+    """No repo to name -> no status to broadcast, rather than a stray separator."""
+    run = make_app({"APP_GITHUB_URL": "javascript:alert(1)"})
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["presenceText"] == ""
+
+
+def test_app_info_leaks_no_secrets(client):
+    run, c = client
+    body = c.get("/api/app-info").get_json()
+    blob = json.dumps(body).lower()
+    for forbidden in ("secret", "token", "client_id", "cookie"):
+        assert forbidden not in blob

@@ -1,6 +1,7 @@
 import { useEffect, useState, useId } from 'react';
-import { Eye, EyeOff, Info, Loader2, ExternalLink, ShieldAlert } from 'lucide-react';
+import { Eye, EyeOff, Info, Loader2, ExternalLink, ShieldAlert, Globe } from 'lucide-react';
 import useStore from '../store/useStore';
+import GithubMark from './GithubMark';
 import { fetchOAuthConfig } from '../services/discordApi';
 
 /**
@@ -79,7 +80,7 @@ function TokenField({ id, value, onChange, disabled, invalid, supporting }: {
 export default function LoginScreen() {
   const [token, setToken] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
-  const { login, isLoading, error } = useStore();
+  const { login, isLoading, error, appInfo, loadAppInfo } = useStore();
   const [oauthEnabled, setOauthEnabled] = useState(false);
   const [oauthWarning, setOauthWarning] = useState<string | null>(null);
   const fieldId = useId();
@@ -91,8 +92,11 @@ export default function LoginScreen() {
       setOauthEnabled(Boolean(config?.enabled));
       setOauthWarning(config?.warning ?? null);
     });
+    // Idempotent — App also loads this, but the login screen is reachable before
+    // that settles and it is where the attribution is most worth showing.
+    void loadAppInfo();
     return () => { cancelled = true; };
-  }, []);
+  }, [loadAppInfo]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -211,6 +215,39 @@ export default function LoginScreen() {
             </p>
           </div>
         </div>
+
+        {/* Attribution. This is the one screen every visitor to a deployment is
+            guaranteed to reach before anything else, so it carries the real,
+            clickable links — unlike the bot's Discord status, which Discord
+            restricts to plain text. */}
+        {(appInfo?.githubUrl || appInfo?.siteUrl) && (
+          <footer className="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-label-small text-on-surface-variant">
+            <span>
+              {appInfo?.name || 'Disclone'} v{appInfo?.version || '—'} · open source
+            </span>
+            {appInfo?.githubUrl && (
+              <a
+                href={appInfo.githubUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary hover:underline rounded-m3-xs"
+              >
+                <GithubMark size={14} />
+                {appInfo.githubDisplay || 'GitHub'}
+              </a>
+            )}
+            {appInfo?.siteUrl && (
+              <a
+                href={appInfo.siteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary hover:underline rounded-m3-xs"
+              >
+                <Globe size={14} /> Live deployment
+              </a>
+            )}
+          </footer>
+        )}
       </div>
     </div>
   );

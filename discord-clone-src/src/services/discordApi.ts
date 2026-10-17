@@ -201,6 +201,42 @@ export async function fetchOAuthConfig(): Promise<OAuthConfig | null> {
 }
 
 /**
+ * Attribution for this deployment: the repository it was built from and the
+ * Render service it is running on.
+ *
+ * Fetched at runtime rather than baked in at build time because the frontend
+ * ships as a single prebuilt file — pointing a deployment at a different site
+ * URL must not require a rebuild.
+ */
+export interface AppInfo {
+  name: string;
+  version: string;
+  /** Clickable, for the in-app UI. Null when unset or not an http(s) URL. */
+  githubUrl: string | null;
+  siteUrl: string | null;
+  /** Plain text, for the Discord presence and other link-less contexts. */
+  githubDisplay: string | null;
+  siteDisplay: string | null;
+  /** Server-composed default custom-status text. */
+  presenceText: string;
+  /** False when APP_PRESENCE_TEXT is pinned server-side. */
+  presenceEditable: boolean;
+}
+
+/** Read the deployment's attribution info. Never throws. */
+export async function fetchAppInfo(): Promise<AppInfo | null> {
+  try {
+    const res = await fetch('/api/app-info');
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text || looksLikeHtml(text)) return null;
+    return JSON.parse(text) as AppInfo;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Collect the access token left in the signed handoff cookie by
  * /auth/discord/callback. Returns null when there is nothing pending.
  */
@@ -362,6 +398,115 @@ export async function createDM(token: string, recipientId: string) {
 // Gateway (WebSocket) for real-time updates
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Presence / activity
+//
+// This is how the project advertises itself to people who see the bot inside
+// Discord, which is the audience that never opens this web client.
+//
+// What a bot is allowed to send is narrow, and it shapes the design:
+//   * only `name`, `state`, `type` and (for Streaming) `url` are accepted;
+//     every other rich-presence field is client-only and silently dropped
+//   * `url` is validated against twitch.tv and youtube.com only, so it cannot
+//     carry a GitHub or Render link
+//   * rich-presence `buttons` — the one genuinely clickable activity element —
+//     are ignored when a bot sends them
+//
+// So the repository can be *shown* in a bot's status but never made clickable.
+// The clickable links live in the app UI instead; see `fetchAppInfo`.
+// ---------------------------------------------------------------------------
+
+export const ACTIVITY_TYPES = {
+  PLAYING: 0,
+  STREAMING: 1,
+  LISTENING: 2,
+  WATCHING: 3,
+  CUSTOM: 4,
+  COMPETING: 5,
+} as const;
+
+export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'invisible';
+
+export interface GatewayActivity {
+  name: string;
+  type: number;
+  /** Displayed text for a CUSTOM activity; secondary line for other types. */
+  state?: string;
+  /** Streaming only, and only twitch.tv/youtube.com are accepted. */
+  url?: string;
+}
+
+export interface GatewayPresence {
+  since: number | null;
+  activities: GatewayActivity[];
+  status: PresenceStatus;
+  afk: boolean;
+}
+
+/**
+ * Discord caps activity text well below the 128-character `name` limit, and the
+ * member list truncates aggressively. Keep custom-status text inside this.
+ */
+export const MAX_ACTIVITY_STATE_LENGTH = 96;
+
+/**
+ * Build a custom status (activity type 4) carrying `text`.
+ *
+ * For type 4 the client renders `state`, not `name`, and `name` is expected to
+ * be the literal string "Custom Status". Returns null for blank text so callers
+ * can treat "no attribution configured" as "send no activity" rather than
+ * emitting an empty custom status.
+ */
+export function buildCustomStatusActivity(text: string | null | undefined): GatewayActivity | null {
+  const trimmed = (text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_ACTIVITY_STATE_LENGTH);
+  if (!trimmed) return null;
+  return { name: 'Custom Status', type: ACTIVITY_TYPES.CUSTOM, state: trimmed };
+}
+
+/** A full presence payload for IDENTIFY or STATUS_UPDATE (op 3). */
+export function buildPresence(
+  activity: GatewayActivity | null,
+  status: PresenceStatus = 'online',
+): GatewayPresence {
+  return {
+    since: null,
+    activities: activity ? [activity] : [],
+    status,
+    afk: false,
+  };
+}
+
+/**
+ * Input for {@link buildAttributionPresence}. Deliberately structural rather
+ * than the store's `AppState`, so this module never depends on the store and
+ * the attribution rules stay unit-testable without a DOM.
+ */
+export interface AttributionPresenceInput {
+  /** The user's opt-out switch. */
+  broadcastPresence: boolean;
+  /** User-edited override; blank means "use the deployment default". */
+  presenceText?: string | null;
+  /** Server-composed default from GET /api/app-info. */
+  defaultText?: string | null;
+}
+
+/**
+ * Compose the presence that advertises this deployment to Discord users — the
+ * audience that meets the bot inside a server and never opens this client.
+ *
+ * Returns null when attribution is switched off or there is no text to show.
+ * Callers turn that into an empty activity list, because sending an empty list
+ * is what *clears* a custom status: toggling the setting off has to remove the
+ * text rather than leave the previous value on the bot.
+ */
+export function buildAttributionPresence(input: AttributionPresenceInput): GatewayPresence | null {
+  if (!input.broadcastPresence) return null;
+  const text = (input.presenceText || '').trim() || (input.defaultText || '');
+  const activity = buildCustomStatusActivity(text);
+  if (!activity) return null;
+  return buildPresence(activity, 'online');
+}
+
 export type GatewayStatus =
   | 'connecting'
   | 'identifying'
@@ -389,6 +534,12 @@ export interface GatewayConnection {
   close: () => void;
   send: (data: any) => void;
   getStatus: () => GatewayStatus;
+  /**
+   * Push a STATUS_UPDATE (op 3) so the presence can change without reconnecting.
+   * Safe to call before the socket is open: the payload is dropped, because
+   * IDENTIFY carries the same presence and a later call can re-apply it.
+   */
+  setPresence: (presence: GatewayPresence) => void;
 }
 
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json';
@@ -419,8 +570,12 @@ export function connectGateway(
   token: string,
   handlers: GatewayHandlers = {},
   intents: number = DEFAULT_INTENTS,
+  initialPresence: GatewayPresence | null = null,
 ): GatewayConnection {
   const gatewayToken = normalizeBotToken(token);
+  // Held so a RESUME (which does not re-send presence) can re-assert it, and so
+  // `setPresence` before the socket opens is not silently lost.
+  let currentPresence: GatewayPresence | null = initialPresence;
 
   let ws: WebSocket | null = null;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -479,6 +634,9 @@ export function connectGateway(
         token: gatewayToken,
         intents,
         properties: { os: 'browser', browser: 'disclone', device: 'disclone' },
+        // Only send the key when there is something to say: an empty presence
+        // object is valid but pointless, and omitting it keeps IDENTIFY minimal.
+        ...(currentPresence ? { presence: currentPresence } : {}),
       },
     });
   };
@@ -486,6 +644,15 @@ export function connectGateway(
   const resume = () => {
     setStatus('resuming');
     send({ op: 6, d: { token: gatewayToken, session_id: sessionId, seq: sequence } });
+  };
+
+  /**
+   * RESUME replays missed events but does not carry a presence, and Discord
+   * clears activities for a resumed session. Re-assert once the resume lands.
+   */
+  const reassertPresence = () => {
+    if (!currentPresence || !currentPresence.activities.length) return;
+    send({ op: 3, d: currentPresence });
   };
 
   const scheduleReconnect = (reason: string) => {
@@ -565,6 +732,7 @@ export function connectGateway(
             case 'RESUMED':
               reconnectAttempts = 0;
               setStatus('ready');
+              reassertPresence();
               break;
             case 'MESSAGE_CREATE':
               handlers.onMessage?.(d);
@@ -661,6 +829,12 @@ export function connectGateway(
     },
     send,
     getStatus: () => status,
+    setPresence: (presence: GatewayPresence) => {
+      currentPresence = presence;
+      // Only STATUS_UPDATE if the socket is live; otherwise IDENTIFY (or the
+      // post-RESUME re-assert) will carry the new value when it reconnects.
+      if (ws && ws.readyState === WebSocket.OPEN) send({ op: 3, d: presence });
+    },
   };
 }
 

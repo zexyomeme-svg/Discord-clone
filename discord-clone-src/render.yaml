@@ -44,3 +44,20 @@ services:
       # the frontend on a different origin.
       - key: CORS_ORIGINS
         value: ""
+      # Attribution, served by GET /api/app-info and rendered two ways: as
+      # clickable links in the app UI, and as the bot's plain-text Discord
+      # custom status. All are read at request time, so changing one only needs
+      # a redeploy — never a frontend rebuild.
+      - key: APP_NAME
+        value: Disclone
+      # APP_VERSION is deliberately not declared: run.py defaults it in step
+      # with package.json, and a pinned copy here would silently drift.
+      # APP_GITHUB_URL already points at this repository.
+      - key: APP_GITHUB_URL
+        value: https://github.com/zexyomeme-svg/Discord-clone
+      # APP_SITE_URL is also not declared: it falls back to PUBLIC_BASE_URL,
+      # which OAuth2 already requires to be this service's public address.
+      # Leave APP_PRESENCE_TEXT blank to let the server compose the status from
+      # the two URLs; set it to pin the exact text and lock out in-app editing.
+      - key: APP_PRESENCE_TEXT
+        value: ""

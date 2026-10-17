@@ -402,7 +402,13 @@ function MobileLayout() {
 }
 
 export default function App() {
-  const { token, authMode, user, isLoading, login, loginWithOAuth, userSettings, updateSettings, unreadCounts, settingsOpen, closeSettings } = useStore();
+  const { token, authMode, user, isLoading, login, loginWithOAuth, userSettings, updateSettings, unreadCounts, settingsOpen, closeSettings, loadAppInfo } = useStore();
+
+  // Attribution (repository + Render site) is fetched on mount rather than at
+  // login, so the login screen and the About page can link to the project even
+  // before a session exists. login() also awaits it, so the gateway IDENTIFY
+  // still carries the presence from the first moment the bot appears online.
+  useEffect(() => { void loadAppInfo(); }, [loadAppInfo]);
 
   // Material ripple feedback. One delegated listener for the whole app; elements
   // opt in with `data-ripple`. Respects the Reduced Motion setting and the OS

@@ -30,6 +30,11 @@ ENV_KEYS = [
     "OAUTH_HANDOFF_MAX_AGE",
     "MAX_UPLOAD_MB",
     "PROXY_TIMEOUT",
+    "APP_NAME",
+    "APP_VERSION",
+    "APP_GITHUB_URL",
+    "APP_SITE_URL",
+    "APP_PRESENCE_TEXT",
 ]
 
 # Never let a test spawn npm or a background build worker.
