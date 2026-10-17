@@ -26,6 +26,11 @@ from pathlib import Path
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent
+# The application lives in a subdirectory of the repository, but both hosting
+# platforms discover their config from the repository root: Render looks for
+# render.yaml there by default, and Railway builds with a Dockerfile it finds
+# there. So deployment config is checked at both levels.
+REPO_ROOT = BASE_DIR.parent
 DIST_DIR = BASE_DIR / "dist"
 INDEX_FILE = DIST_DIR / "index.html"
 PACKAGE_JSON = BASE_DIR / "package.json"
@@ -40,7 +45,13 @@ STATUS_FILE = BASE_DIR / ".frontend_build_status.json"
 LOCK_FILE = BASE_DIR / ".frontend_build.lock"
 RUN_PY = BASE_DIR / "run.py"
 REQUIREMENTS = BASE_DIR / "requirements.txt"
-RENDER_YAML = BASE_DIR / "render.yaml"
+# render.yaml may sit at the repository root (what Render's Blueprint discovers
+# without a custom path) or beside the app. Prefer the root, accept either.
+RENDER_YAML_ROOT = REPO_ROOT / "render.yaml"
+RENDER_YAML_LOCAL = BASE_DIR / "render.yaml"
+RENDER_YAML = RENDER_YAML_ROOT if RENDER_YAML_ROOT.exists() else RENDER_YAML_LOCAL
+DOCKERFILE = REPO_ROOT / "Dockerfile"
+DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 TSCONFIG = BASE_DIR / "tsconfig.json"
 VITE_CONFIG = BASE_DIR / "vite.config.ts"
 SRC_DIR = BASE_DIR / "src"
@@ -296,7 +307,6 @@ def check_project_files() -> list[dict[str, Any]]:
         "package.json": PACKAGE_JSON,
         "run.py": RUN_PY,
         "requirements.txt": REQUIREMENTS,
-        "render.yaml": RENDER_YAML,
         "tsconfig.json": TSCONFIG,
         "vite.config.ts": VITE_CONFIG,
         "src/": SRC_DIR,
@@ -306,6 +316,28 @@ def check_project_files() -> list[dict[str, Any]]:
     for name, path in required_files.items():
         exists = path.exists()
         add(f"file:{name}", exists, str(path) if exists else f"missing: {path}")
+
+    # Deployment config. render.yaml is accepted at either level, and the
+    # Dockerfile is what Railway builds with (and what Render uses when the
+    # service runtime is Docker), so both are reported rather than one.
+    add(
+        "file:render.yaml",
+        RENDER_YAML.exists(),
+        str(RENDER_YAML) if RENDER_YAML.exists()
+        else f"missing: looked in {RENDER_YAML_ROOT} and {RENDER_YAML_LOCAL}",
+    )
+    add(
+        "file:Dockerfile",
+        DOCKERFILE.exists(),
+        str(DOCKERFILE) if DOCKERFILE.exists()
+        else "missing: Railway builds with a Dockerfile when one is present",
+    )
+    add(
+        "file:.dockerignore",
+        DOCKERIGNORE.exists(),
+        str(DOCKERIGNORE) if DOCKERIGNORE.exists()
+        else "missing: without it node_modules/ and dist/ are copied into the build context",
+    )
 
     add("python", True, sys.version.split()[0])
 
@@ -542,11 +574,26 @@ def main(argv: list[str] | None = None) -> int:
         failed = [c for c in checks if not c.get("ok")]
         # Soft failures for optional python modules during pure frontend build are ok,
         # but missing core project files should fail --build-only / --check-only.
+        #
+        # Deployment config is soft too, and for a specific reason: inside the
+        # Docker image those files are deliberately absent. .dockerignore keeps
+        # render.yaml, the Dockerfile and itself out of the build context because
+        # nothing at runtime reads them — they are consumed by the host platform
+        # during the build. Treating them as hard failures would make
+        # `--check-only` fail in the exact image that is correctly built.
+        soft_failures = {
+            "npm",
+            "node_modules",
+            "dist/index.html",
+            "file:render.yaml",
+            "file:Dockerfile",
+            "file:.dockerignore",
+        }
         hard_failures = [
             c
             for c in failed
             if not str(c.get("name", "")).startswith("python-module:")
-            and c.get("name") not in {"npm", "node_modules", "dist/index.html"}
+            and c.get("name") not in soft_failures
         ]
         if hard_failures and (args.check_only or args.build_only):
             msg = "Project checks reported hard failures."

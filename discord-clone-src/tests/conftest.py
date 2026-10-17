@@ -35,6 +35,26 @@ ENV_KEYS = [
     "APP_GITHUB_URL",
     "APP_SITE_URL",
     "APP_PRESENCE_TEXT",
+    # Hosting-platform variables. run.py derives PUBLIC_BASE_URL from these when
+    # it is not set explicitly, so a value leaking in from the ambient
+    # environment (or from a CI runner that is itself on one of these platforms)
+    # would silently change the outcome of every OAuth and attribution test.
+    "RENDER",
+    "RENDER_SERVICE_ID",
+    "RENDER_SERVICE_NAME",
+    "RENDER_SERVICE_TYPE",
+    "RENDER_EXTERNAL_URL",
+    "RENDER_EXTERNAL_HOSTNAME",
+    "RAILWAY_PUBLIC_DOMAIN",
+    "RAILWAY_PRIVATE_DOMAIN",
+    "RAILWAY_SERVICE_NAME",
+    "RAILWAY_SERVICE_ID",
+    "RAILWAY_PROJECT_ID",
+    "RAILWAY_PROJECT_NAME",
+    "RAILWAY_ENVIRONMENT_NAME",
+    "RAILWAY_ENVIRONMENT_ID",
+    "FLY_APP_NAME",
+    "DYNO",
 ]
 
 # Never let a test spawn npm or a background build worker.
