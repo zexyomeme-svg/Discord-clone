@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_INTENTS,
   GATEWAY_INTENTS,
@@ -11,6 +11,12 @@ import {
   getUserAvatarUrl,
   normalizeBotToken,
   validateOutgoingMessage,
+  ACTIVITY_TYPES,
+  MAX_ACTIVITY_STATE_LENGTH,
+  buildCustomStatusActivity,
+  buildPresence,
+  buildAttributionPresence,
+  fetchAppInfo,
 } from '../src/services/discordApi';
 
 /** Minimal File stand-in so these tests can run in a node environment. */
@@ -146,5 +152,211 @@ describe('CDN url helpers', () => {
     const url = getGuildIconUrl('1', '../../evil', 64);
     expect(url).not.toContain('/../../');
     expect(url).toContain('..%2F..%2Fevil');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Custom status (activity type 4) — how the bot names the repository
+// ---------------------------------------------------------------------------
+
+describe('ACTIVITY_TYPES', () => {
+  it('matches the documented gateway activity type numbers', () => {
+    expect(ACTIVITY_TYPES).toEqual({
+      PLAYING: 0,
+      STREAMING: 1,
+      LISTENING: 2,
+      WATCHING: 3,
+      CUSTOM: 4,
+      COMPETING: 5,
+    });
+  });
+});
+
+describe('buildCustomStatusActivity', () => {
+  it('builds a type-4 activity whose name is the literal Discord expects', () => {
+    // For type 4 the client renders `state`, not `name`; name must be
+    // "Custom Status".
+    expect(buildCustomStatusActivity('Disclone · github.com/o/r')).toEqual({
+      name: 'Custom Status',
+      type: 4,
+      state: 'Disclone · github.com/o/r',
+    });
+  });
+
+  it('never emits an activity with a url — bots cannot link a custom status', () => {
+    const activity = buildCustomStatusActivity('github.com/o/r');
+    expect(activity).not.toBeNull();
+    expect('url' in (activity as object)).toBe(false);
+  });
+
+  it('collapses whitespace and trims, so the member list is not fed padding', () => {
+    expect(buildCustomStatusActivity('  hello   there  ')?.state).toBe('hello there');
+  });
+
+  it('truncates to the activity state limit', () => {
+    const state = buildCustomStatusActivity('x'.repeat(400))?.state;
+    expect(state).toHaveLength(MAX_ACTIVITY_STATE_LENGTH);
+  });
+
+  it.each([[''], ['   '], ['\t\n'], [null], [undefined]])(
+    'returns null for blank input %s so callers can clear the status instead',
+    (input) => {
+      expect(buildCustomStatusActivity(input as string | null | undefined)).toBeNull();
+    },
+  );
+});
+
+describe('buildPresence', () => {
+  it('wraps an activity in a valid IDENTIFY/STATUS_UPDATE presence payload', () => {
+    const activity = buildCustomStatusActivity('hi');
+    expect(buildPresence(activity)).toEqual({
+      since: null,
+      activities: [activity],
+      status: 'online',
+      afk: false,
+    });
+  });
+
+  it('honours an explicit status', () => {
+    expect(buildPresence(null, 'dnd').status).toBe('dnd');
+  });
+
+  it('sends an empty activity list when there is nothing to show', () => {
+    // An empty list is what *clears* a custom status on Discord.
+    expect(buildPresence(null).activities).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Attribution presence — the user-facing opt-out
+// ---------------------------------------------------------------------------
+
+describe('buildAttributionPresence', () => {
+  const DEFAULT_TEXT = 'Disclone · github.com/o/r · site.onrender.com';
+
+  it('broadcasts the deployment default when the user has not overridden it', () => {
+    const presence = buildAttributionPresence({
+      broadcastPresence: true,
+      presenceText: '',
+      defaultText: DEFAULT_TEXT,
+    });
+    expect(presence?.activities).toHaveLength(1);
+    expect(presence?.activities[0].type).toBe(ACTIVITY_TYPES.CUSTOM);
+    expect(presence?.activities[0].state).toBe(DEFAULT_TEXT);
+    expect(presence?.status).toBe('online');
+  });
+
+  it('prefers the user\'s own text over the deployment default', () => {
+    const presence = buildAttributionPresence({
+      broadcastPresence: true,
+      presenceText: 'My custom line',
+      defaultText: DEFAULT_TEXT,
+    });
+    expect(presence?.activities[0].state).toBe('My custom line');
+  });
+
+  it('falls back to the default when the override is only whitespace', () => {
+    const presence = buildAttributionPresence({
+      broadcastPresence: true,
+      presenceText: '   ',
+      defaultText: DEFAULT_TEXT,
+    });
+    expect(presence?.activities[0].state).toBe(DEFAULT_TEXT);
+  });
+
+  it('returns null when the user has opted out', () => {
+    // Null becomes an empty activity list, which clears the status — opting out
+    // must actually remove the text, not leave the previous value on the bot.
+    expect(
+      buildAttributionPresence({ broadcastPresence: false, defaultText: DEFAULT_TEXT }),
+    ).toBeNull();
+  });
+
+  it('returns null when there is no text at all to show', () => {
+    expect(buildAttributionPresence({ broadcastPresence: true })).toBeNull();
+    expect(
+      buildAttributionPresence({ broadcastPresence: true, presenceText: '', defaultText: '' }),
+    ).toBeNull();
+  });
+
+  it('tolerates nullish inputs', () => {
+    expect(
+      buildAttributionPresence({ broadcastPresence: true, presenceText: null, defaultText: null }),
+    ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/app-info — fetched at runtime so a redeployment needs no rebuild
+// ---------------------------------------------------------------------------
+
+describe('fetchAppInfo', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubFetch(body: string, init: { ok?: boolean; status?: number; throws?: boolean } = {}) {
+    if (init.throws) {
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+      return;
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: init.ok ?? true,
+        status: init.status ?? 200,
+        text: async () => body,
+      })),
+    );
+  }
+
+  it('requests the endpoint on the same origin (no hardcoded host)', async () => {
+    stubFetch('{}');
+    await fetchAppInfo();
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledWith('/api/app-info');
+  });
+
+  it('returns the parsed attribution payload', async () => {
+    const payload = {
+      name: 'Disclone',
+      version: '1.3.0',
+      githubUrl: 'https://github.com/zexyomeme-svg/Discord-clone',
+      siteUrl: 'https://discord-clone-render.onrender.com',
+      githubDisplay: 'github.com/zexyomeme-svg/Discord-clone',
+      siteDisplay: 'discord-clone-render.onrender.com',
+      presenceText: 'Disclone · github.com/zexyomeme-svg/Discord-clone',
+      presenceEditable: true,
+    };
+    stubFetch(JSON.stringify(payload));
+    expect(await fetchAppInfo()).toEqual(payload);
+  });
+
+  it('returns null instead of throwing when the server is unreachable', async () => {
+    stubFetch('', { throws: true });
+    expect(await fetchAppInfo()).toBeNull();
+  });
+
+  it('returns null on a non-2xx response', async () => {
+    stubFetch('{"name":"x"}', { ok: false, status: 500 });
+    expect(await fetchAppInfo()).toBeNull();
+  });
+
+  it('returns null on an empty body', async () => {
+    stubFetch('');
+    expect(await fetchAppInfo()).toBeNull();
+  });
+
+  it('returns null when the SPA catch-all served HTML instead of JSON', async () => {
+    // The classic misconfiguration: /api/app-info falls through to index.html.
+    // JSON.parse would throw on that, so it must be caught and reported as null.
+    stubFetch('<!doctype html><html><body>SPA</body></html>');
+    expect(await fetchAppInfo()).toBeNull();
+  });
+
+  it('returns null on malformed JSON rather than throwing', async () => {
+    stubFetch('{not json');
+    expect(await fetchAppInfo()).toBeNull();
   });
 });

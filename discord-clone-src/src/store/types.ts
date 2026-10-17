@@ -141,7 +141,8 @@ export type SettingsPage =
   | 'keybinds'
   | 'language'
   | 'streamer'
-  | 'advanced';
+  | 'advanced'
+  | 'about';
 
 export type ThemeMode = 'dark' | 'light';
 export type LanguageCode = 'en-US' | 'en-GB' | 'es-ES' | 'fr-FR' | 'de-DE' | 'pt-BR';
@@ -169,4 +170,12 @@ export interface UserSettings {
   localDisplayName: string;
   localBannerColor: string;
   localBio: string;
+  /**
+   * Broadcast the project attribution as the bot's Discord presence, so people
+   * who meet the bot inside Discord — and never open this client — can see what
+   * it is running on.
+   */
+  broadcastPresence: boolean;
+  /** Custom-status text. Empty means "use the server-composed default". */
+  presenceText: string;
 }

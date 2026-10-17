@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MessageSquare, Plus, Compass } from 'lucide-react';
 import useStore from '../store/useStore';
+import GithubMark from './GithubMark';
 import { getGuildIconUrl } from '../services/discordApi';
 import type { Guild } from '../store/types';
 
@@ -92,7 +93,7 @@ function RailButton({
 }
 
 export default function ServerList() {
-  const { guilds, selectedGuildId, selectGuild, viewMode, setViewMode, channels, unreadCounts, userSettings } = useStore();
+  const { guilds, selectedGuildId, selectGuild, viewMode, setViewMode, channels, unreadCounts, userSettings, appInfo } = useStore();
 
   return (
     <div
@@ -172,6 +173,22 @@ export default function ServerList() {
       >
         <Compass size={24} className="transition-colors group-hover:text-on-success-container" />
       </RailButton>
+
+      {/* Attribution, pinned to the bottom with mt-auto so it stays visible
+          regardless of how many guilds are in the list. This is the clickable
+          counterpart to the plain-text custom status the bot broadcasts —
+          Discord does not let a bot status carry a link. */}
+      {appInfo?.githubUrl && (
+        <div className="mt-auto pt-1 flex flex-col items-center gap-2 flex-shrink-0">
+          <div className="w-8 h-0.5 bg-outline-variant rounded-full" aria-hidden="true" />
+          <RailButton
+            label="Source code on GitHub"
+            onClick={() => window.open(appInfo.githubUrl!, '_blank', 'noopener,noreferrer')}
+          >
+            <GithubMark size={22} />
+          </RailButton>
+        </div>
+      )}
     </div>
   );
 }

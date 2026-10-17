@@ -58,6 +58,41 @@ REQUEST_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "30"))
 # multipart envelope without letting the proxy buffer unbounded bodies.
 MAX_UPLOAD_MB = float(os.environ.get("MAX_UPLOAD_MB", "32"))
 
+# --- Project attribution -----------------------------------------------------
+# Published to the client by GET /api/app-info and rendered two ways:
+#
+#   * as real, clickable links inside this app's UI
+#   * as plain text in the bot's Discord presence (a custom status)
+#
+# The distinction matters: Discord only lets a bot set an activity's `name`,
+# `state`, `type` and — for Streaming only — `url`, and that `url` is validated
+# against twitch.tv/youtube.com. Rich-presence `buttons` are client-only and are
+# ignored when a bot sends them. So a bot status can *show* the repository but
+# can never make it clickable. These are runtime values rather than build-time
+# constants because the frontend ships as a single prebuilt file: changing the
+# deployment URL must not require a rebuild.
+APP_NAME = (os.environ.get("APP_NAME") or "").strip() or "Disclone"
+APP_VERSION = (os.environ.get("APP_VERSION") or "").strip() or "1.3.0"
+APP_GITHUB_URL = (
+    os.environ.get("APP_GITHUB_URL")
+    or "https://github.com/zexyomeme-svg/Discord-clone"
+).strip().rstrip("/")
+# Resolution order for the live deployment URL:
+#   1. APP_SITE_URL, if set explicitly
+#   2. PUBLIC_BASE_URL — OAuth2 already requires this to be the public address
+#      of the service, so a fork that configured OAuth gets a correct site URL
+#      for free instead of advertising someone else's deployment
+#   3. the address of the service render.yaml declares (`discord-clone-render`)
+APP_SITE_URL = (
+    os.environ.get("APP_SITE_URL")
+    or PUBLIC_BASE_URL
+    or "https://discord-clone-render.onrender.com"
+).strip().rstrip("/")
+# Discord truncates long activity text in the member list, and `state` is
+# capped well below the 128-character `name` limit. Keep the default short.
+PRESENCE_TEXT_MAX = 96
+APP_PRESENCE_TEXT = (os.environ.get("APP_PRESENCE_TEXT") or "").strip()
+
 AUTO_BUILD_FRONTEND = os.environ.get("AUTO_BUILD_FRONTEND", "1").strip().lower() not in {
     "0",
     "false",
@@ -450,6 +485,74 @@ def _apply_security_headers(response: Response) -> Response:
         "frame-ancestors 'none'",
     )
     return response
+
+
+def _safe_public_url(raw: str) -> str | None:
+    """Return `raw` only if it is an http(s) URL safe to publish to the browser.
+
+    These values end up rendered as `href`s, so a `javascript:` or `data:` scheme
+    from a misconfigured environment would become a live XSS vector rather than a
+    broken link. A netloc containing `@` is rejected too: it is userinfo syntax,
+    and `https://github.com@evil.example/` resolves to `evil.example`.
+    """
+    if not raw:
+        return None
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if not parsed.netloc or "@" in parsed.netloc:
+        return None
+    return raw
+
+
+def _display_url(url: str | None) -> str | None:
+    """`https://github.com/o/r` -> `github.com/o/r`, for text-only contexts."""
+    if not url:
+        return None
+    parsed = urlsplit(url)
+    if not parsed.netloc:
+        return None
+    return f"{parsed.netloc}{parsed.path}".rstrip("/")
+
+
+def _default_presence_text(github_display: str | None, site_display: str | None) -> str:
+    """Compose the custom-status text shown to Discord users.
+
+    Prefers the bare repository path over the full URL so it survives the member
+    list's narrow column, and only appends the deployment when both fit.
+    """
+    if APP_PRESENCE_TEXT:
+        return APP_PRESENCE_TEXT[:PRESENCE_TEXT_MAX]
+    if not github_display:
+        return ""
+    base = f"{APP_NAME} · {github_display}"
+    if site_display and len(f"{base} · {site_display}") <= PRESENCE_TEXT_MAX:
+        return f"{base} · {site_display}"
+    return base[:PRESENCE_TEXT_MAX]
+
+
+@app.get("/api/app-info")
+def app_info() -> tuple[dict[str, Any], int]:
+    """Attribution data for the client UI and the bot's Discord presence."""
+    github = _safe_public_url(APP_GITHUB_URL)
+    site = _safe_public_url(APP_SITE_URL)
+    github_display = _display_url(github)
+    site_display = _display_url(site)
+    return {
+        "name": APP_NAME,
+        "version": APP_VERSION,
+        # Clickable, in-app.
+        "githubUrl": github,
+        "siteUrl": site,
+        # Plain text, for the Discord presence and anywhere a link cannot be used.
+        "githubDisplay": github_display,
+        "siteDisplay": site_display,
+        "presenceText": _default_presence_text(github_display, site_display),
+        "presenceEditable": not bool(APP_PRESENCE_TEXT),
+    }, 200
 
 
 @app.get("/healthz")

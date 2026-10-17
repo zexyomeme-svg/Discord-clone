@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, User, Shield, Palette, Bell, Keyboard, Accessibility, MonitorSpeaker, Globe, Zap, Link2, AppWindow, LogOut, ChevronRight, Copy, Check } from 'lucide-react';
+import { X, User, Shield, Palette, Bell, Keyboard, Accessibility, MonitorSpeaker, Globe, Zap, Link2, AppWindow, LogOut, ChevronRight, Copy, Check, Info, ExternalLink } from 'lucide-react';
 import useStore from '../store/useStore';
 import { getUserAvatarUrl } from '../services/discordApi';
 import type { SettingsPage, UserSettings } from '../store/types';
+import GithubMark from './GithubMark';
 
 interface NavItem {
   id: SettingsPage;
@@ -19,6 +20,7 @@ const USER_SETTINGS: NavItem[] = [
 ];
 
 const APP_SETTINGS: NavItem[] = [
+  { id: 'about', label: 'About Disclone', icon: Info },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'accessibility', label: 'Accessibility', icon: Accessibility },
   { id: 'voice', label: 'Voice & Video', icon: MonitorSpeaker },
@@ -629,6 +631,170 @@ function AdvancedPage() {
 }
 
 // ---- Page Router ----
+/**
+ * Attribution page: where this build came from, where it is deployed, and what
+ * the bot tells Discord users about both.
+ *
+ * The presence preview is shown because Discord imposes a real constraint worth
+ * surfacing rather than hiding: a bot may only set an activity's name, state and
+ * type, its `url` field is validated against twitch.tv/youtube.com, and
+ * rich-presence buttons are ignored for bots. So the status can *name* the
+ * repository but can never make it clickable — the clickable links are here.
+ */
+function AboutPage() {
+  const { appInfo, userSettings, updateSettings, setError, gatewayStatus } = useStore();
+
+  const preview = userSettings.presenceText.trim() || appInfo?.presenceText || '';
+  const overLimit = preview.length > 96;
+  const live = gatewayStatus === 'ready';
+
+  const link = (href: string | null, label: string, sub: string | null, icon: React.ReactNode) => {
+    if (!href) return null;
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-ripple
+        className="m3-interactive flex items-center gap-3 p-3.5 rounded-m3-md bg-surface-container-high
+          text-on-surface ring-1 ring-outline-variant
+          transition-shadow duration-200 ease-standard hover:shadow-md"
+      >
+        <span className="w-10 h-10 rounded-m3-sm bg-secondary-container text-on-secondary-container
+          flex items-center justify-center flex-shrink-0">
+          {icon}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-label-large truncate">{label}</span>
+          {sub && <span className="block text-label-small text-on-surface-variant truncate">{sub}</span>}
+        </span>
+        <ExternalLink size={16} className="text-on-surface-variant flex-shrink-0" aria-hidden="true" />
+      </a>
+    );
+  };
+
+  return (
+    <div className="animate-fade-in-fast">
+      <h2 className="text-headline-small font-medium text-on-surface mb-1.5">
+        About {appInfo?.name || 'Disclone'}
+      </h2>
+      <p className="text-body-medium text-on-surface-variant mb-6">
+        Open-source Discord client. Version {appInfo?.version || '—'}.
+      </p>
+
+      <div className="space-y-2.5 mb-6">
+        {link(appInfo?.githubUrl ?? null, 'Source code on GitHub', appInfo?.githubDisplay ?? null, <GithubMark />)}
+        {link(appInfo?.siteUrl ?? null, 'Live deployment', appInfo?.siteDisplay ?? null, <Globe size={20} />)}
+        {!appInfo?.githubUrl && !appInfo?.siteUrl && (
+          <p className="text-body-small text-on-surface-variant p-3.5 rounded-m3-md bg-surface-container-high">
+            Attribution is not configured on this deployment. Set <code className="px-1 rounded-m3-xs bg-surface-container-lowest">APP_GITHUB_URL</code> and{' '}
+            <code className="px-1 rounded-m3-xs bg-surface-container-lowest">APP_SITE_URL</code>.
+          </p>
+        )}
+      </div>
+
+      <div className="p-4 rounded-m3-lg bg-surface-container-high ring-1 ring-outline-variant">
+        <h3 className="text-title-small text-on-surface mb-1">Bot presence</h3>
+        <p className="text-body-small text-on-surface-variant mb-3 leading-relaxed">
+          Advertise this project to people who meet the bot inside Discord and never open this client.
+        </p>
+
+        <SettingsRow
+          label="Show attribution in the bot's status"
+          desc="Sets a Discord custom status while the realtime connection is live."
+          enabled={userSettings.broadcastPresence}
+          onToggle={() => updateSettings({ broadcastPresence: !userSettings.broadcastPresence })}
+        />
+
+        {userSettings.broadcastPresence && (
+          <div className="mt-4 space-y-3">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="presence-text" className="text-label-small text-on-surface-variant">
+                  Status text
+                </label>
+                <span className={`text-label-small tabular-nums ${overLimit ? 'text-error' : 'text-on-surface-variant/70'}`}>
+                  {preview.length}/96
+                </span>
+              </div>
+              <input
+                id="presence-text"
+                value={userSettings.presenceText}
+                onChange={(e) => updateSettings({ presenceText: e.target.value })}
+                placeholder={appInfo?.presenceText || 'Disclone · github.com/…'}
+                disabled={!appInfo?.presenceEditable}
+                className="w-full bg-surface-container-lowest text-on-surface text-body-medium rounded-m3-sm
+                  px-3 py-2.5 outline-none placeholder:text-on-surface-variant/60 disabled:opacity-50
+                  focus:outline focus:outline-2 focus:outline-primary transition-[outline-color] duration-200"
+              />
+              <p className="mt-1.5 text-label-small text-on-surface-variant">
+                {appInfo?.presenceEditable
+                  ? 'Leave blank to use the deployment default.'
+                  : 'Pinned by the server via APP_PRESENCE_TEXT; set that variable to change it.'}
+              </p>
+              {overLimit && (
+                <p className="mt-1 text-label-small text-error" role="alert">
+                  Discord truncates activity text; keep it under 96 characters.
+                </p>
+              )}
+            </div>
+
+            {/* What Discord users actually see. */}
+            <div className="p-3 rounded-m3-md bg-surface-container">
+              <p className="text-label-small text-on-surface-variant mb-2 uppercase tracking-[0.05em]">
+                Preview — as shown in the member list
+              </p>
+              <div className="flex items-center gap-2.5">
+                <span className="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center flex-shrink-0">
+                  <span className="w-2.5 h-2.5 rounded-full bg-success" aria-hidden="true" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-label-large text-on-surface truncate">
+                    {(appInfo?.name) || 'Disclone'}
+                  </span>
+                  <span className={`block text-label-small truncate ${preview ? 'text-on-surface-variant' : 'text-on-surface-variant/60'}`}>
+                    {preview || 'No status'}
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            {!live && (
+              <p className="text-label-small text-warning flex items-start gap-2">
+                <Info size={14} className="flex-shrink-0 mt-0.5" aria-hidden="true" />
+                <span>
+                  The realtime connection is not live, so this is not being broadcast yet. It is sent when the
+                  gateway connects and re-sent whenever you change it here.
+                </span>
+              </p>
+            )}
+
+            <button
+              type="button"
+              data-ripple
+              onClick={() => {
+                if (!preview) { setError('There is no status text to copy.'); return; }
+                copyToClipboard(preview, setError);
+              }}
+              className="m3-interactive flex items-center gap-2 h-9 px-4 rounded-m3-xl
+                text-label-large text-primary transition-colors duration-200 ease-standard"
+            >
+              <Copy size={15} aria-hidden="true" /> Copy status text
+            </button>
+          </div>
+        )}
+      </div>
+
+      <p className="mt-5 text-label-small text-on-surface-variant leading-relaxed">
+        A bot's Discord status is plain text — Discord only lets bots set an activity's name, state and type, its{' '}
+        <code className="px-1 rounded-m3-xs bg-surface-container-high">url</code> field accepts only twitch.tv and
+        youtube.com, and rich-presence buttons are ignored for bots. That is why the links above are clickable here
+        but the status is not.
+      </p>
+    </div>
+  );
+}
+
 function SettingsContent({ page }: { page: SettingsPage }) {
   switch (page) {
     case 'my-account': return <MyAccountPage />;
@@ -644,6 +810,7 @@ function SettingsContent({ page }: { page: SettingsPage }) {
     case 'connections': return <ConnectionsPage />;
     case 'language': return <LanguagePage />;
     case 'streamer': return <StreamerPage />;
+    case 'about': return <AboutPage />;
     default: return <GenericPage title="Settings" desc="Select an option from the sidebar." />;
   }
 }
@@ -686,7 +853,7 @@ export default function SettingsModal() {
             Log out <LogOut size={17} aria-hidden="true" />
           </button>
           <div className="h-px bg-outline-variant mx-3 my-2" />
-          <p className="px-3 text-label-small text-on-surface-variant">Disclone v1.2.0</p>
+          <p className="px-3 text-label-small text-on-surface-variant">Disclone v1.3.0</p>
         </div>
       </div>
 

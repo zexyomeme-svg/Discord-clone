@@ -75,13 +75,14 @@ CI runs all of the above on every push (`.github/workflows/ci.yml`).
 ├── tests/
 │   ├── markdown.test.ts       # Renderer output + XSS resistance
 │   ├── messageFormat.test.ts  # Grouping/timestamp rules
-│   ├── discordApi.test.ts     # Validation limits + CDN URL helpers
+│   ├── discordApi.test.ts     # Validation limits, CDN URLs, presence helpers
 │   ├── conftest.py            # Flask test fixtures
 │   └── test_run.py            # Routing, proxy and OAuth2 security tests
 ├── dist/                      # Production build (gitignored, served by Flask)
 └── src/
     ├── components/            # React UI components (Material 3)
     │   ├── Composer.tsx       # Message input, shared by the guild and DM views
+    │   ├── GithubMark.tsx     # GitHub logo (lucide-react dropped brand icons)
     │   └── …                  # ServerList, ChannelList, DMList, MessageArea,
     │                          #   DMMessageArea, MemberList, UserPanel,
     │                          #   SettingsModal, OAuthDashboard, LoginScreen,
@@ -302,6 +303,7 @@ The gateway implementation:
 * Treats a missed ACK as a zombie connection and reconnects with `RESUME`.
 * Handles op 1 (heartbeat request), op 7 (reconnect) and op 9 (invalid session, resuming only when Discord says it is possible).
 * Reconnects with exponential backoff and jitter, up to 6 attempts, using `resume_gateway_url` when available.
+* **Broadcasts attribution as a custom status.** IDENTIFY carries a presence built from `GET /api/app-info`, so the bot names the repository and deployment from the first moment it appears online. The activity list is re-sent with op 3 after every `RESUME`, because a resume does not carry presence and Discord clears activities in the meantime.
 * **Surfaces fatal close codes.** `4004`, `4010`, `4011`, `4012`, `4013` and `4014` are mapped to specific, actionable messages — for `4014` the message names the exact privileged intents to enable. The connection state is shown in the bottom-left user panel. Previously every close code was discarded and the client silently stopped receiving events.
 
 ---
@@ -411,10 +413,62 @@ Visible controls either perform a supported action or open a supported Discord/b
 * **Streamer Mode** — masks user names, role names and channel names.
 * **Profiles** — saves a local preview/display-name preference only.
 * **DM list** — start a DM by user ID, hide conversations, group DM icons.
+* **About Disclone** — `Settings → About Disclone` shows the repository and live deployment as real links, previews the member-list status, and lets the user edit or switch off the broadcast status. The guild rail and the login screen carry the same links, so the attribution is reachable before login as well as after.
 
 Account password, email, phone, 2FA, disable-account, delete-account and global avatar/profile mutations are **not** exposed: bot-token and OAuth2 API sessions cannot perform them.
 
 Presentation filters (saturation, high contrast) are applied to `<html>`, never to `<body>`. A `filter` on a non-root element becomes the containing block for `position: fixed` descendants, which would trap the full-screen settings modal, and they are only engaged when a setting actually needs them.
+
+---
+
+## Attribution — promoting the project
+
+`GET /api/app-info` publishes where a deployment came from:
+
+```json
+{
+  "name": "Disclone",
+  "version": "1.3.0",
+  "githubUrl": "https://github.com/zexyomeme-svg/Discord-clone",
+  "siteUrl": "https://discord-clone-render.onrender.com",
+  "githubDisplay": "github.com/zexyomeme-svg/Discord-clone",
+  "siteDisplay": "discord-clone-render.onrender.com",
+  "presenceText": "Disclone · github.com/zexyomeme-svg/Discord-clone · discord-clone-render.onrender.com",
+  "presenceEditable": true
+}
+```
+
+The client fetches it at **runtime**, not build time. The frontend ships as one prebuilt file, so
+pointing a deployment at a different site URL must not require a rebuild — changing an environment
+variable and redeploying is enough.
+
+It is rendered two ways, because Discord treats them differently:
+
+| Where | What | Clickable? |
+| --- | --- | --- |
+| **Bot's Discord custom status** | `presenceText` (activity type 4) | No — see below |
+| **In-app UI** | login footer, guild rail button, `Settings → About Disclone` | Yes |
+
+**Why the status cannot be a link.** A bot may only set an activity's `name`, `state`, `type` and
+(optionally) `url`, and that `url` is validated against `https://twitch.tv/` and `https://youtube.com/`
+alone. The rich-presence `buttons` field is ignored for bots. So a bot status can *name* the
+repository but can never carry a clickable link — the links have to live in the app. This is why both
+surfaces exist.
+
+For a type 4 (custom) activity Discord renders `state`, not `name`, and expects `name` to be the
+literal string `"Custom Status"`. `state` is capped well below the 128-character activity limit, so
+the server composes `Name · repo · site` and drops the site — never the repository, which is the thing
+being promoted — if the result would exceed 96 characters.
+
+Users stay in control: `Settings → About Disclone` has a **Broadcast project links in my status**
+switch and an editable status field. Turning it off sends an empty activity list, which is what
+actually *clears* a custom status on Discord. Setting `APP_PRESENCE_TEXT` pins the text server-side and
+reports `presenceEditable: false`, which makes the field read-only.
+
+`APP_GITHUB_URL` and `APP_SITE_URL` become `href`s in the browser, so `_safe_public_url()` rejects any
+scheme other than http(s), an empty netloc, and `@` userinfo — `https://github.com@evil.example/`
+resolves to `evil.example`, and a misconfigured `javascript:` value would be a live XSS vector rather
+than a broken link. Rejected values are dropped, not published.
 
 ---
 
@@ -446,6 +500,11 @@ See `.env.example` for the annotated list. Summary:
 | `TRUSTED_HOSTS` | *(empty)* | Comma-separated hostnames whose `X-Forwarded-Host` may be used when `PUBLIC_BASE_URL` is unset. |
 | `OAUTH_STATE_MAX_AGE` | `600` | CSRF state cookie lifetime, seconds. |
 | `OAUTH_HANDOFF_MAX_AGE` | `120` | One-time token handoff cookie lifetime, seconds. |
+| `APP_NAME` | `Disclone` | Display name in the UI and at the front of the default status text. |
+| `APP_VERSION` | `1.3.0` | Shown on the About page. |
+| `APP_GITHUB_URL` | this repository | Repository to promote. Must be http(s) with no userinfo. |
+| `APP_SITE_URL` | `PUBLIC_BASE_URL`, else this Render service | The live deployment. |
+| `APP_PRESENCE_TEXT` | *(empty)* | Pins the exact status text and makes it read-only in-app. Empty composes `Name · repo · site`. |
 
 ---
 
@@ -495,20 +554,20 @@ All other advisories found during the last review (postcss, browserslist, esbuil
 ## Tests
 
 ```bash
-npm test                     # 102 unit tests (Vitest)
-python -m pytest tests -v    # 65 backend tests (pytest + Flask test client)
+npm test                     # 128 unit tests (Vitest)
+python -m pytest tests -v    # 94 backend tests (pytest + Flask test client)
 ```
 
-Frontend coverage: markdown rendering for every supported construct, the full XSS payload battery with structural assertions, code-block protection, mention/role/channel/emoji/timestamp resolution, streamer-mode masking, sentinel forgery, message grouping rules, timestamp formatting, upload and length validation, gateway intent bits, and CDN URL construction.
+Frontend coverage: markdown rendering for every supported construct, the full XSS payload battery with structural assertions, code-block protection, mention/role/channel/emoji/timestamp resolution, streamer-mode masking, sentinel forgery, message grouping rules, timestamp formatting, upload and length validation, gateway intent bits, CDN URL construction, custom-status activity construction and truncation, presence payload shape, the attribution opt-out, and `/api/app-info` fetching including the HTML-instead-of-JSON misconfiguration.
 
-Backend coverage: health and SPA serving, path traversal, trusted-host handling and host-header injection, OAuth state/CSRF validation, error-parameter sanitisation, the signed handoff cookie (issue, exchange, tamper, forge, expire, path scoping), token revocation, proxy endpoint guarding, header forwarding, error-detail leakage, CORS policy, upload limits and security headers.
+Backend coverage: health and SPA serving, path traversal, trusted-host handling and host-header injection, OAuth state/CSRF validation, error-parameter sanitisation, the signed handoff cookie (issue, exchange, tamper, forge, expire, path scoping), token revocation, proxy endpoint guarding, header forwarding, error-detail leakage, CORS policy, upload limits, security headers, and `/api/app-info` (shape, environment overrides, presence-text composition and truncation, and rejection of `javascript:`/`data:`/userinfo URLs that would otherwise become live `href`s).
 
 ---
 
 ## Notes and limitations
 
 * The Flask proxy handles Discord **REST** calls only. The Gateway WebSocket is opened directly from the browser.
-* `vite-plugin-singlefile` is enabled, so the production build is a single self-contained `dist/index.html` (~431 kB, ~122 kB gzipped).
+* `vite-plugin-singlefile` is enabled, so the production build is a single self-contained `dist/index.html` (~483 kB, ~132 kB gzipped).
 * Some Discord features require privileged bot intents and correct server permissions.
 * Never hard-code a bot token in source or environment variables.
 * The repository previously contained a committed Python virtualenv under `.local/` (211 files, 2.2 MB) that could not even import Flask. It has been removed from tracking and root `.gitignore` now prevents a recurrence.

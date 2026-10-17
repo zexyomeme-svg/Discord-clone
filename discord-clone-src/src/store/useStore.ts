@@ -32,6 +32,8 @@ const DEFAULT_SETTINGS: UserSettings = {
   localDisplayName: '',
   localBannerColor: '#5865f2',
   localBio: '',
+  broadcastPresence: true,
+  presenceText: '',
 };
 
 function mergeMessagesUnique(messages: Message[]): Message[] {
@@ -191,6 +193,9 @@ interface AppState {
   gatewayStatus: GatewayStatus | null;
   gatewayDetail: string | null;
 
+  /** Attribution for this deployment (repository + Render site), from /api/app-info. */
+  appInfo: api.AppInfo | null;
+
   viewMode: ViewMode;
   selectedGuildId: string | null;
   selectedChannelId: string | null;
@@ -244,6 +249,23 @@ interface AppState {
   updateSettings: (partial: Partial<UserSettings>) => void;
   clearUnread: (channelId: string) => void;
   requestNotificationPermission: () => Promise<void>;
+  /** Fetch attribution once; pushes the presence if the gateway is already up. */
+  loadAppInfo: () => Promise<void>;
+  /** Re-broadcast (or clear) the bot's Discord presence from current settings. */
+  applyPresence: () => void;
+}
+
+/**
+ * Read the attribution settings out of the store for
+ * `api.buildAttributionPresence`. The presence *rules* live in discordApi.ts so
+ * they can be unit-tested without a DOM; this is only the plumbing.
+ */
+function attributionInput(state: AppState): api.AttributionPresenceInput {
+  return {
+    broadcastPresence: state.userSettings.broadcastPresence,
+    presenceText: state.userSettings.presenceText,
+    defaultText: state.appInfo?.presenceText,
+  };
 }
 
 /** Release object URLs created for optimistic attachments. */
@@ -265,6 +287,7 @@ const useStore = create<AppState>((set, get) => ({
   isConnecting: false,
   gatewayStatus: null,
   gatewayDetail: null,
+  appInfo: null,
   viewMode: 'servers',
   selectedGuildId: null,
   selectedChannelId: null,
@@ -313,8 +336,13 @@ const useStore = create<AppState>((set, get) => ({
       const dmChannels = mergeDMChannels(fetched, stored);
       storeDMChannels(user.id, dmChannels);
 
+      // Fetched before IDENTIFY so the presence is present from the first
+      // moment the bot appears online, instead of popping in seconds later.
+      if (!get().appInfo) await get().loadAppInfo();
+
       let gateway: GatewayConnection | null = null;
       try {
+        const presence = api.buildAttributionPresence(attributionInput(get()));
         gateway = api.connectGateway(normalizedToken, {
           onStatusChange: (status: GatewayStatus, detail?: string) => {
             set({
@@ -422,7 +450,7 @@ const useStore = create<AppState>((set, get) => ({
           onReady: () => set({ isConnecting: false }),
           onClose: () => set({ isConnecting: false }),
           onError: () => set({ isConnecting: false }),
-        });
+        }, api.DEFAULT_INTENTS, presence);
       } catch {
         // The REST features still work without a live gateway; the user simply
         // will not receive realtime events.
@@ -725,13 +753,38 @@ const useStore = create<AppState>((set, get) => ({
   setError: (error) => set({ error }),
   openSettings: (page?: SettingsPage) => set({ settingsOpen: true, settingsPage: page || 'my-account' }),
   closeSettings: () => set({ settingsOpen: false }),
+
+  loadAppInfo: async () => {
+    if (get().appInfo) return;
+    const info = await api.fetchAppInfo();
+    if (!info) return;
+    set({ appInfo: info });
+    // If the gateway was already connected when this arrived, IDENTIFY went out
+    // without attribution, so push it now.
+    get().applyPresence();
+  },
+
+  applyPresence: () => {
+    const state = get();
+    if (!state.gateway) return;
+    state.gateway.setPresence(
+      api.buildAttributionPresence(attributionInput(state)) ?? api.buildPresence(null, 'online'),
+    );
+  },
   setSettingsPage: (page) => set({ settingsPage: page }),
   updateSettings: (partial) => {
-    const updated = { ...get().userSettings, ...partial };
+    const previous = get().userSettings;
+    const updated = { ...previous, ...partial };
     set({ userSettings: updated });
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
     } catch { /* storage unavailable */ }
+    // Presence is broadcast to Discord, so changing it has to be pushed rather
+    // than merely persisted — otherwise it would only apply on the next login.
+    const presenceChanged =
+      (partial.broadcastPresence !== undefined && partial.broadcastPresence !== previous.broadcastPresence)
+      || (partial.presenceText !== undefined && partial.presenceText !== previous.presenceText);
+    if (presenceChanged) get().applyPresence();
   },
   clearUnread: (channelId) => set({ unreadCounts: { ...get().unreadCounts, [channelId]: 0 } }),
 
