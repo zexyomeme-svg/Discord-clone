@@ -3,6 +3,8 @@ services:
     name: discord-clone-render
     env: python
     plan: free
+    # Node 20 reached end-of-life in April 2026; the nodeenv fallback installs
+    # the current Node 22 LTS instead.
     buildCommand: |
       pip install -r requirements.txt
       python build_frontend.py --build-only
@@ -12,16 +14,33 @@ services:
       - key: PYTHON_VERSION
         value: 3.13.4
       - key: NODE_VERSION
-        value: 20.20.2
+        value: 22.22.3
       - key: BACKGROUND_BUILD
         value: "1"
       - key: AUTO_BUILD_FRONTEND
         value: "1"
+      # Off by default: with dist/ present there is nothing to check, and this
+      # would otherwise spawn a subprocess per Gunicorn worker on every boot.
+      - key: RUN_STARTUP_CHECKS
+        value: "0"
+      # Sign the one-time OAuth2 handoff cookie. Generate with:
+      #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+      # If unset, run.py generates one and persists it to .flask_secret_key,
+      # which only works while the filesystem survives between deploys.
+      - key: SECRET_KEY
+        generateValue: true
       - key: DISCORD_CLIENT_ID
         sync: false
       - key: DISCORD_CLIENT_SECRET
         sync: false
       - key: DISCORD_OAUTH_SCOPES
         value: identify email guilds
+      # REQUIRED for OAuth2: the public address of this service. Without it the
+      # server cannot build a redirect URI from a trusted source and OAuth2
+      # login fails closed with an explanatory 503.
       - key: PUBLIC_BASE_URL
         sync: false
+      # Leave CORS locked to same-origin. Only set this if you deliberately host
+      # the frontend on a different origin.
+      - key: CORS_ORIGINS
+        value: ""

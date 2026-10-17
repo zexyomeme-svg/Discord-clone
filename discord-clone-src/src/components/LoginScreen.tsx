@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Eye, EyeOff, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
 import useStore from '../store/useStore';
+import { fetchOAuthConfig } from '../services/discordApi';
 
 export default function LoginScreen() {
   const [token, setToken] = useState('');
@@ -8,12 +9,16 @@ export default function LoginScreen() {
   const [localError, setLocalError] = useState<string | null>(null);
   const { login, isLoading, error } = useStore();
   const [oauthEnabled, setOauthEnabled] = useState(false);
+  const [oauthWarning, setOauthWarning] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/oauth/config')
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => setOauthEnabled(Boolean(data?.enabled)))
-      .catch(() => setOauthEnabled(false));
+    let cancelled = false;
+    void fetchOAuthConfig().then((config) => {
+      if (cancelled) return;
+      setOauthEnabled(Boolean(config?.enabled));
+      setOauthWarning(config?.warning ?? null);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -88,7 +93,9 @@ export default function LoginScreen() {
           </a>
           {!oauthEnabled && (
             <p className="mt-2 text-xs text-discord-text-muted leading-relaxed">
-              OAuth2 login is disabled until DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are configured on the server.
+              {oauthWarning
+                ? 'OAuth2 login is unavailable: the server has credentials but cannot determine a trusted public URL. Set PUBLIC_BASE_URL (or DISCORD_REDIRECT_URI) on the server.'
+                : 'OAuth2 login is disabled until DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are configured on the server.'}
             </p>
           )}
 

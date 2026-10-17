@@ -1,23 +1,35 @@
 import { useState, memo } from 'react';
 import { Search, Plus, Users, X } from 'lucide-react';
 import useStore from '../store/useStore';
-import { getUserAvatarUrl } from '../services/discordApi';
+import { getChannelIconUrl, getUserAvatarUrl } from '../services/discordApi';
 import type { Channel } from '../store/types';
 
-const DMItem = memo(({ channel, isSelected, onClick }: { channel: Channel; isSelected: boolean; onClick: () => void }) => {
+const DMItem = memo(({ channel, isSelected, onClick, onHide }: { channel: Channel; isSelected: boolean; onClick: () => void; onHide: () => void }) => {
   const r = channel.recipients?.[0];
-  if (!r && channel.type !== 3) return null;
+  const isGroup = channel.type === 3;
+  if (!r && !isGroup) return null;
+
+  const groupIcon = isGroup ? getChannelIconUrl(channel.id, channel.icon) : null;
   const av = r ? getUserAvatarUrl(r.id, r.avatar, r.discriminator) : 'https://cdn.discordapp.com/embed/avatars/0.png';
-  const name = channel.type === 3 ? (channel.name || channel.recipients?.map(x => x.username).join(', ') || 'Group DM') : (r?.global_name || r?.username || 'Unknown');
+  const name = isGroup ? (channel.name || channel.recipients?.map(x => x.username).join(', ') || 'Group DM') : (r?.global_name || r?.username || 'Unknown');
 
   return (
-    <button onClick={onClick}
-      className={`flex items-center gap-3 w-full px-2 py-[6px] rounded transition-colors group ${
+    // A real <div> rather than a nested <button>: the hide control below was
+    // previously an <X> icon inside the row button, so it could not have its own
+    // click handler and was purely decorative.
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      className={`flex items-center gap-3 w-full px-2 py-[6px] rounded transition-colors group cursor-pointer ${
         isSelected ? 'bg-discord-active text-white' : 'text-discord-text-muted hover:text-discord-text hover:bg-discord-hover'
       }`}>
       <div className="relative flex-shrink-0">
-        {channel.type === 3 ? (
-          <div className="w-8 h-8 rounded-full bg-discord-input flex items-center justify-center"><Users size={16} /></div>
+        {isGroup ? (
+          groupIcon
+            ? <img src={groupIcon} alt="" className="w-8 h-8 rounded-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            : <div className="w-8 h-8 rounded-full bg-discord-input flex items-center justify-center"><Users size={16} /></div>
         ) : (
           <img src={av} alt="" className="w-8 h-8 rounded-full"
             onError={(e) => { (e.target as HTMLImageElement).src = 'https://cdn.discordapp.com/embed/avatars/0.png'; }} />
@@ -25,15 +37,22 @@ const DMItem = memo(({ channel, isSelected, onClick }: { channel: Channel; isSel
       </div>
       <div className="min-w-0 flex-1 text-left">
         <p className="text-[15px] font-medium truncate leading-5">{name}</p>
-        {channel.type === 3 && channel.recipients && <p className="text-xs text-discord-text-muted truncate">{channel.recipients.length} Members</p>}
+        {isGroup && channel.recipients && <p className="text-xs text-discord-text-muted truncate">{channel.recipients.length} Members</p>}
       </div>
-      {!isSelected && <X size={14} className="text-discord-text-muted opacity-0 group-hover:opacity-100 hover:text-discord-text transition-all flex-shrink-0" />}
-    </button>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onHide(); }}
+        title="Hide this conversation from the list"
+        aria-label={`Hide conversation with ${name}`}
+        className="p-0.5 rounded text-discord-text-muted opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-discord-text hover:bg-discord-dark transition-all flex-shrink-0">
+        <X size={14} />
+      </button>
+    </div>
   );
 });
 
 export default function DMList() {
-  const { dmChannels, selectedChannelId, selectDMChannel, createDMChannel, setError, unreadCounts, userSettings } = useStore();
+  const { dmChannels, selectedChannelId, selectDMChannel, createDMChannel, hideDMChannel, setError, unreadCounts, userSettings } = useStore();
   const [q, setQ] = useState('');
   const [newDmUserId, setNewDmUserId] = useState('');
   const [showNewDm, setShowNewDm] = useState(false);
@@ -62,7 +81,7 @@ export default function DMList() {
       </div>
 
       <div className="flex-1 overflow-y-auto channel-scroll pt-2 px-2 min-h-0">
-        <button onClick={() => setError('Friend management is a Discord user-client feature. Bot mode lists existing DMs and can create a bot DM by user ID.')} className="flex items-center gap-3 w-full px-2 py-[6px] rounded text-discord-text-muted hover:text-discord-text hover:bg-discord-hover transition-colors">
+        <button onClick={() => setError('Friend management is a Discord user-client feature and is not available to bots. Use the + button to start a DM with a user ID.')} className="flex items-center gap-3 w-full px-2 py-[6px] rounded text-discord-text-muted hover:text-discord-text hover:bg-discord-hover transition-colors">
           <Users size={20} /><span className="text-[15px] font-medium">Friends info</span>
         </button>
         <div className="flex items-center justify-between px-2 pt-5 pb-1">
@@ -80,12 +99,24 @@ export default function DMList() {
         {!filtered.length ? (
           <div className="px-2 py-8 text-center">
             <p className="text-sm text-discord-text-muted">{q ? 'No results' : 'No DMs yet'}</p>
+            {!q && (
+              <p className="text-[11px] text-discord-text-muted mt-2 leading-relaxed px-1">
+                Bot tokens cannot list existing DMs, so conversations you start
+                here with the <span className="text-discord-text">+</span> button
+                are remembered in this browser.
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-px">
             {filtered.map(ch => (
               <div key={ch.id} className="relative">
-                <DMItem channel={ch} isSelected={selectedChannelId === ch.id} onClick={() => selectDMChannel(ch.id)} />
+                <DMItem
+                  channel={ch}
+                  isSelected={selectedChannelId === ch.id}
+                  onClick={() => selectDMChannel(ch.id)}
+                  onHide={() => hideDMChannel(ch.id)}
+                />
                 {userSettings.unreadBadge && (unreadCounts[ch.id] || 0) > 0 && (
                   <span className="absolute right-7 top-1/2 -translate-y-1/2 min-w-5 h-5 px-1 rounded-full bg-discord-red text-white text-[11px] font-bold flex items-center justify-center">{unreadCounts[ch.id] > 99 ? '99+' : unreadCounts[ch.id]}</span>
                 )}

@@ -446,16 +446,10 @@ function StreamerPage() {
 }
 
 function NotificationsPage() {
-  const { userSettings, updateSettings, setError } = useStore();
-  const requestNotifications = async () => {
-    if (!('Notification' in window)) {
-      setError('This browser does not support desktop notifications.');
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    updateSettings({ desktopNotifications: permission === 'granted' });
-    setError(permission === 'granted' ? 'Desktop notifications enabled.' : 'Desktop notifications were not granted.');
-  };
+  const { userSettings, updateSettings, requestNotificationPermission } = useStore();
+  // Delegated to the store so the permission result and the stored preference
+  // can never disagree, and so a denied/blocked state is reported to the user.
+  const requestNotifications = () => void requestNotificationPermission();
   return (
     <div className="animate-fade-in-fast">
       <h2 className="text-xl font-bold text-white mb-5">Notifications</h2>
@@ -637,7 +631,9 @@ export default function SettingsModal() {
 
   if (!settingsOpen) return null;
 
-  const handleLogout = () => { logout(); closeSettings(); };
+  // logout() is async: in OAuth mode it asks the backend to revoke the Discord
+  // access token before clearing local state.
+  const handleLogout = () => { closeSettings(); void logout(); };
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col md:flex-row animate-settings-open bg-discord-channel">

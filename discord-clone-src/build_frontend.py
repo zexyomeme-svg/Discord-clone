@@ -312,7 +312,9 @@ def check_project_files() -> list[dict[str, Any]]:
     npm = _find_npm()
     add("npm", bool(npm), npm or "not found (nodeenv fallback available at build time)")
 
-    for module_name in ("flask", "flask_cors", "requests", "gunicorn"):
+    # itsdangerous is imported directly by run.py to sign the one-time OAuth2
+    # handoff cookie, so it is checked alongside the other runtime modules.
+    for module_name in ("flask", "flask_cors", "requests", "gunicorn", "itsdangerous"):
         try:
             __import__(module_name)
             add(f"python-module:{module_name}", True)

@@ -1,0 +1,4 @@
+# Development / test dependencies. Not needed at runtime or on Render.
+-r requirements.txt
+
+pytest==8.4.2
