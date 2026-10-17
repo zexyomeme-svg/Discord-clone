@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, User, Shield, Palette, Bell, Keyboard, Accessibility, MonitorSpeaker, Globe, Zap, Link2, AppWindow, LogOut, ChevronRight, Copy } from 'lucide-react';
+import { X, User, Shield, Palette, Bell, Keyboard, Accessibility, MonitorSpeaker, Globe, Zap, Link2, AppWindow, LogOut, ChevronRight, Copy, Check } from 'lucide-react';
 import useStore from '../store/useStore';
 import { getUserAvatarUrl } from '../services/discordApi';
 import type { SettingsPage, UserSettings } from '../store/types';
@@ -31,30 +31,62 @@ const APP_SETTINGS: NavItem[] = [
 
 function SidebarNav({ items, section, current, onSelect }: { items: NavItem[]; section: string; current: SettingsPage; onSelect: (p: SettingsPage) => void }) {
   return (
-    <div className="mb-2">
-      <h3 className="px-2.5 py-1.5 text-[11px] font-bold text-discord-text-muted uppercase tracking-[0.02em]">{section}</h3>
-      {items.map(item => {
-        const Icon = item.icon;
-        return (
-          <button key={item.id} onClick={() => onSelect(item.id)}
-            className={`flex items-center gap-2 w-full px-2.5 py-[6px] rounded text-[15px] transition-colors mb-px ${
-              current === item.id ? 'bg-discord-active text-white' : 'text-discord-text-muted hover:text-discord-text hover:bg-discord-hover'
-            }`}>
-            <Icon size={16} className="flex-shrink-0" />
-            <span className="truncate">{item.label}</span>
-          </button>
-        );
-      })}
+    <div className="mb-3">
+      <h3 className="px-3 py-1.5 text-label-small text-on-surface-variant uppercase tracking-[0.05em]">{section}</h3>
+      <div className="space-y-0.5">
+        {items.map(item => {
+          const Icon = item.icon;
+          const active = current === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onSelect(item.id)}
+              aria-current={active ? 'page' : undefined}
+              data-ripple
+              className={`m3-interactive flex items-center gap-3 w-full h-10 px-3 rounded-m3-xl
+                text-left transition-colors duration-200 ease-standard
+                ${active
+                  ? 'bg-secondary-container text-on-secondary-container'
+                  : 'text-on-surface-variant hover:text-on-surface'}`}
+            >
+              <Icon size={18} className="flex-shrink-0" />
+              <span className="truncate text-label-large">{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 
+/**
+ * Material 3 switch: a 52x32 track with a 2px outline when off, a thumb that
+ * grows from 16px to 24px as it crosses, and a check inside the on-state thumb.
+ * The border is always present (transparent-matched when on) so the geometry
+ * does not shift between states.
+ */
 function SettingsToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   return (
-    <button onClick={onToggle}
-      className={`w-10 h-6 rounded-full transition-colors relative ${enabled ? 'bg-discord-green' : 'bg-discord-input'}`}>
-      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`} />
+    <button
+      type="button"
+      onClick={onToggle}
+      role="switch"
+      aria-checked={enabled}
+      data-ripple
+      className={`m3-interactive relative w-[52px] h-8 rounded-full flex-shrink-0 border-2
+        transition-colors duration-200 ease-emphasized
+        ${enabled ? 'bg-primary border-primary' : 'bg-surface-container-highest border-outline'}`}
+    >
+      <span
+        aria-hidden="true"
+        className={`absolute top-1/2 -translate-y-1/2 rounded-full flex items-center justify-center
+          transition-all duration-200 ease-emphasized
+          ${enabled ? 'left-[20px] w-6 h-6 bg-on-primary' : 'left-[4px] w-4 h-4 bg-outline'}`}
+      >
+        {enabled && <Check size={15} className="text-primary" strokeWidth={3} />}
+      </span>
     </button>
   );
 }
@@ -638,18 +670,23 @@ export default function SettingsModal() {
   return (
     <div className="fixed inset-0 z-[100] flex flex-col md:flex-row animate-settings-open bg-discord-channel">
       {/* Sidebar — right-aligned content */}
-      <div className="w-full md:w-auto md:flex-[1_0_218px] flex md:justify-end bg-discord-sidebar max-h-[38vh] md:max-h-none flex-shrink-0">
-        <div className="w-full md:w-[218px] overflow-y-auto channel-scroll py-3 md:py-[60px] px-[6px]">
+      <div className="w-full md:w-auto md:flex-[1_0_218px] flex md:justify-end bg-surface-container max-h-[38vh] md:max-h-none flex-shrink-0 md:elev-1">
+        <div className="w-full md:w-[218px] overflow-y-auto channel-scroll py-3 md:py-[60px] px-2">
           <SidebarNav items={USER_SETTINGS} section="User Settings" current={settingsPage} onSelect={setSettingsPage} />
-          <div className="h-px bg-discord-border mx-2.5 my-2" />
+          <div className="h-px bg-outline-variant mx-3 my-2" />
           <SidebarNav items={APP_SETTINGS} section="App Settings" current={settingsPage} onSelect={setSettingsPage} />
-          <div className="h-px bg-discord-border mx-2.5 my-2" />
-          <button onClick={handleLogout}
-            className="flex items-center justify-between w-full px-2.5 py-[6px] rounded text-[15px] text-discord-red hover:bg-discord-red/10 transition-colors">
-            Log Out <LogOut size={16} />
+          <div className="h-px bg-outline-variant mx-3 my-2" />
+          <button
+            type="button"
+            onClick={handleLogout}
+            data-ripple
+            className="m3-interactive flex items-center justify-between gap-2 w-full h-10 px-3 rounded-m3-xl
+              text-label-large text-error transition-colors duration-200 ease-standard"
+          >
+            Log out <LogOut size={17} aria-hidden="true" />
           </button>
-          <div className="h-px bg-discord-border mx-2.5 my-2" />
-          <p className="px-2.5 text-[11px] text-discord-text-muted">Disclone v1.0.0</p>
+          <div className="h-px bg-outline-variant mx-3 my-2" />
+          <p className="px-3 text-label-small text-on-surface-variant">Disclone v1.2.0</p>
         </div>
       </div>
 

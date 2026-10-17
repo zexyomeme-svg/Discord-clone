@@ -1,7 +1,7 @@
 {
   "name": "discord-clone-render",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "A Discord-style React/Vite frontend served by Flask for Render deployment.",
   "engines": {

@@ -80,14 +80,20 @@ CI runs all of the above on every push (`.github/workflows/ci.yml`).
 │   └── test_run.py            # Routing, proxy and OAuth2 security tests
 ├── dist/                      # Production build (gitignored, served by Flask)
 └── src/
-    ├── components/            # React UI components
+    ├── components/            # React UI components (Material 3)
+    │   ├── Composer.tsx       # Message input, shared by the guild and DM views
+    │   └── …                  # ServerList, ChannelList, DMList, MessageArea,
+    │                          #   DMMessageArea, MemberList, UserPanel,
+    │                          #   SettingsModal, OAuthDashboard, LoginScreen,
+    │                          #   LoadingScreen, ErrorNotification
     ├── services/discordApi.ts # REST client + Gateway WebSocket
     ├── store/                 # Zustand state
     ├── utils/
     │   ├── markdown.ts        # Shared, XSS-safe Discord markdown renderer
     │   ├── messageFormat.ts   # Shared timestamp/grouping helpers
+    │   ├── ripple.ts          # Delegated Material ripple feedback
     │   └── cn.ts
-    └── index.css              # Tailwind theme + markup styles
+    └── index.css              # Material 3 design system + markup styles
 ```
 
 ---
@@ -302,10 +308,84 @@ The gateway implementation:
 
 ## UI and settings
 
+### Design system — Material 3
+
+The layout is Discord's; the visual language is Material 3. Every token lives in
+`src/index.css` under `@theme`, so Tailwind generates the utilities
+(`bg-surface-container-high`, `text-on-surface-variant`, `rounded-m3-xl`,
+`text-label-large`, `ease-emphasized`, …) and there is no second source of truth.
+
+**Tonal surfaces.** In the dark scheme, elevation steps *lighter*:
+
+| Token | Where it is used |
+| --- | --- |
+| `surface` | app background behind the rail, login screen |
+| `surface-container-low` | guild rail, user panel |
+| `surface-container` | channel drawer, DM drawer, member list, cards |
+| `surface-container-high` | chat column, top app bars |
+| `surface-container-highest` | text fields, popouts, snackbars |
+
+The light scheme redefines the same tokens so elevation inverts correctly, and
+adds hairline borders to elevated surfaces because tonal contrast alone is not
+enough on white.
+
+**State layers.** Hover, focus and press do not swap to a different solid
+colour. `.m3-interactive::before` paints a translucent overlay of `--sl-colour`
+at 8% / 10% / 10%, which composes over whatever the element already is — so a
+selected `secondary-container` pill and a hovered one look right without either
+cancelling the other out. This is the single biggest difference from Discord's
+`hover:bg-*` approach, where selected and hovered styles have to be hand-merged.
+
+**Elevation.** Five levels, each pairing an M3 shadow with a primary surface
+tint (5% → 14%), exactly as the dark scheme specifies. `.elev-1` … `.elev-5`
+set `background-image`, so they compose with any `bg-*` utility on the same
+element. Tailwind's built-in `shadow-*` values were overridden with the M3
+shadows, so files that were not rewritten pick them up automatically.
+
+**Active indicators.** Selected navigation items use a `secondary-container`
+pill (`rounded-m3-xl`) rather than a flat grey rectangle — the guild rail,
+channel drawer, DM drawer, member list, settings nav and the mobile navigation
+bar all follow it. The rail keeps Discord's growing left bar and now animates it
+on the emphasized curve; the hover height was previously dead markup
+(`group-hover` with no `group` ancestor).
+
+**Shape scale.** `rounded-m3-xs` 4 / `-sm` 8 / `-md` 12 / `-lg` 16 / `-xl` 28.
+Named distinctly so Tailwind's built-in `rounded-*` step is not silently
+re-sized under components that were not rewritten.
+
+**Type scale.** The full M3 set from `display-large` down to `label-small`,
+each with its own line-height, letter-spacing and weight. `label-large` is used
+for list-item labels, `title-small` for headers, `body-small` for supporting text.
+
+**Motion.** Emphasized curves (`cubic-bezier(0.2, 0, 0, 1)` and its
+decelerate/accelerate variants) rather than `ease-in-out`. Everything honours
+both the in-app Reduced Motion setting and `prefers-reduced-motion`.
+
+**Ripple.** `src/utils/ripple.ts` installs one delegated `pointerdown` listener
+at the app root. Any element opts in with `data-ripple` and gets a circle sized
+to cover the farthest corner from the actual press point, tinted with
+`currentColor` at 16% and clipped by `.m3-interactive`'s `overflow: hidden`.
+It is skipped for reduced motion, for disabled hosts, and for non-primary
+buttons, and a guard prevents ripples stacking on a host still animating.
+
+**Focus.** Every interactive element gets a 2px primary outline on
+`:focus-visible`. Discord's UI has no focus indicator at all, so this is the
+largest accessibility gain in the redesign.
+
+**Components rebuilt to M3 patterns:** navigation rail (guild rail), navigation
+drawer (channel/DM lists), list items (members, settings nav), navigation bar
+with pill indicators (mobile), filled text field with floating label (login),
+switch with growing thumb and check (settings toggles), assist chips (reactions),
+snackbar (errors and confirmations), linear progress indicator (loading).
+
+The former `--color-discord-*` tokens are kept as aliases onto the tonal ramp so
+components that were not rewritten inherit the new palette instead of stranding
+on the old flat colours.
+
 ### Responsive layouts
 
-* **Desktop/tablet (`md` and wider)** — Discord-style columns: server rail, channel/DM sidebar, chat, optional member list.
-* **Mobile (`< md`)** — single-panel navigation with a top bar and bottom nav for Servers, Channels/DMs, Chat and Members.
+* **Desktop/tablet (`md` and wider)** — Discord-style columns: 72px guild rail, 240px channel/DM drawer, chat, optional 240px member list, 52px user panel.
+* **Mobile (`< md`)** — single-panel navigation with a 56px top app bar and an 80px M3 navigation bar (pill indicator behind each destination) for Servers, Channels/DMs, Chat and Members.
 
 ### Message markup
 
@@ -319,9 +399,9 @@ The guild and DM views share this one renderer. They previously had separate cop
 
 Visible controls either perform a supported action or open a supported Discord/browser page:
 
-* **Composer** — sends text, validates Discord's limits, selects/removes attachments, inserts a quick emoji, restores the draft on failure.
-* **Message actions** — add a 👍 reaction (bot mode), copy a reply mention, copy message text.
-* **Reactions** — incoming `MESSAGE_REACTION_ADD` events update counts live.
+* **Composer** — sends text, validates Discord's limits, selects/removes attachments, inserts a quick emoji, restores the draft on failure. Shared by the guild and DM views (`components/Composer.tsx`) so the two cannot drift. Shows a live character count once within 200 of Discord's 2000-character limit, blocks sending past it with an inline error, and has an explicit send button that stays inert until there is something to send.
+* **Message actions** — add a 👍 reaction (bot mode), copy a reply mention, copy message text. The bar is hover- *and* keyboard-reachable (`:focus-within`), so it can be opened without a pointer.
+* **Reactions** — incoming `MESSAGE_REACTION_ADD` events update counts live, and clicking an existing reaction chip now adds that same emoji rather than doing nothing.
 * **Search** — channel and DM areas filter loaded messages; `Ctrl+K` focuses the active search box.
 * **Keybinds** — `Ctrl+Shift+M` mute, `Ctrl+Shift+D` deafen, `Ctrl+Shift+U` upload picker, `Escape` closes settings.
 * **Unread badges** — per channel/DM/server, plus the browser tab title.

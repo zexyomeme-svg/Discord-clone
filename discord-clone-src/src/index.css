@@ -1,32 +1,208 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   Disclone design system
+   --------------------------------------------------------------------------
+   The layout stays Discord's — 72px guild rail, 240px channel drawer,
+   flexible chat column with a 48px top bar, 240px member list, 52px user
+   panel — but the visual language is Material 3:
+
+     * tonal surfaces that step lighter with elevation (dark scheme)
+     * state layers instead of colour swaps: hover/focus/press paint a
+       translucent overlay of the on-surface colour over whatever is there,
+       so a tinted pill and a hovered pill compose correctly
+     * pill-shaped active indicators on navigation items
+     * five levels of elevation, each shadow paired with a primary surface
+       tint exactly as the M3 dark scheme specifies
+     * a shape scale, an M3 type scale, and emphasized motion curves
+     * real ripples, clipped to the component bounds
+
+   Tokens live in @theme so Tailwind generates utilities for them
+   (bg-surface-container-high, text-on-surface-variant, rounded-m3-lg, ...).
+   ========================================================================== */
+
 @theme {
-  /* Tailwind 4 has no `xs` breakpoint by default. App.tsx used `xs:grid-cols-5`,
-     which was silently dropped because the variant did not exist. Declaring it
-     here makes that class real. */
+  /* Tailwind 4 has no `xs` breakpoint by default. App.tsx uses
+     `xs:grid-cols-5`, which was silently dropped because the variant did not
+     exist. Declaring it here makes that class real. */
   --breakpoint-xs: 26rem;
 
-  --color-discord-dark: #1e1f22;
-  --color-discord-darker: #111214;
-  --color-discord-sidebar: #2b2d31;
-  --color-discord-channel: #313338;
-  --color-discord-input: #383a40;
-  --color-discord-hover: #35373c;
-  --color-discord-active: #404249;
+  /* ---- Material 3 dark scheme -------------------------------------------
+     Source colour is Discord's blurple #5865F2. Every other tone is derived
+     from it, so the palette stays recognisably Discord while behaving like a
+     tonal system. */
+  --color-surface: #131417;
+  --color-surface-dim: #131417;
+  --color-surface-bright: #3a3c42;
+  --color-surface-container-lowest: #0e0f11;
+  --color-surface-container-low: #1b1c1f;
+  --color-surface-container: #232428;
+  --color-surface-container-high: #2d2e33;
+  --color-surface-container-highest: #383940;
+
+  --color-on-surface: #e4e5ea;
+  --color-on-surface-variant: #c3c6cf;
+  --color-outline: #8d9199;
+  --color-outline-variant: #43464e;
+
+  --color-primary: #bfc2ff;
+  --color-on-primary: #26309a;
+  --color-primary-container: #3d47b3;
+  --color-on-primary-container: #e0e1ff;
+  --color-inverse-primary: #5865f2;
+
+  --color-secondary: #c3c5dd;
+  --color-on-secondary: #2c2f42;
+  --color-secondary-container: #3b3e52;
+  --color-on-secondary-container: #dfe1f9;
+
+  --color-tertiary: #e7bad8;
+  --color-on-tertiary: #45263e;
+  --color-tertiary-container: #5d3d55;
+  --color-on-tertiary-container: #ffd7f1;
+
+  --color-error: #ffb4ab;
+  --color-on-error: #690005;
+  --color-error-container: #93000a;
+  --color-on-error-container: #ffdad6;
+
+  --color-success: #7ddb96;
+  --color-success-container: #1f4a2c;
+  --color-on-success-container: #c8f5d2;
+  --color-warning: #ffb95e;
+  --color-warning-container: #5c3d00;
+  --color-on-warning-container: #ffdfb4;
+
+  /* ---- Discord aliases --------------------------------------------------
+     Kept so the components that were not part of this redesign
+     (SettingsModal, OAuthDashboard) pick up the new palette automatically
+     instead of stranding on the old flat colours. */
+  --color-discord-dark: #1b1c1f;
+  --color-discord-darker: #131417;
+  --color-discord-sidebar: #232428;
+  --color-discord-channel: #2d2e33;
+  --color-discord-input: #383940;
+  --color-discord-hover: #3a3c42;
+  --color-discord-active: #45474f;
   --color-discord-blurple: #5865f2;
   --color-discord-blurple-hover: #4752c4;
   --color-discord-green: #23a559;
   --color-discord-yellow: #f0b232;
   --color-discord-red: #da373c;
   --color-discord-fuchsia: #eb459e;
-  --color-discord-text: #dbdee1;
-  --color-discord-text-muted: #949ba4;
-  --color-discord-text-link: #00a8fc;
-  --color-discord-header: #313338;
-  --color-discord-mention: rgba(88, 101, 242, 0.3);
+  --color-discord-text: #e4e5ea;
+  --color-discord-text-muted: #a3a8b0;
+  --color-discord-text-link: #7cb7ff;
+  --color-discord-header: #2d2e33;
+  --color-discord-mention: color-mix(in srgb, var(--color-primary-container) 45%, transparent);
   --color-discord-card: #232428;
-  --color-discord-popout: #232428;
-  --color-discord-border: #3f4147;
+  --color-discord-popout: #2d2e33;
+  --color-discord-border: #43464e;
+
+  /* ---- Shape scale ------------------------------------------------------
+     Distinct names so Tailwind's built-in `rounded-*` step is not silently
+     re-sized under the components that were not rewritten. */
+  --radius-m3-none: 0rem;
+  --radius-m3-xs: 0.25rem;   /*  4 — extra small */
+  --radius-m3-sm: 0.5rem;    /*  8 — small       */
+  --radius-m3-md: 0.75rem;   /* 12 — medium      */
+  --radius-m3-lg: 1rem;      /* 16 — large       */
+  --radius-m3-xl: 1.75rem;   /* 28 — extra large */
+
+  /* ---- Elevation --------------------------------------------------------
+     M3 pairs each shadow with a primary surface tint in the dark scheme.
+     Overriding Tailwind's built-ins means every existing shadow-* in the app
+     becomes M3-compliant, including in files this redesign did not touch. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px 2px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+  --shadow-xl: 0 2px 3px rgba(0, 0, 0, 0.3), 0 6px 10px 4px rgba(0, 0, 0, 0.15);
+  --shadow-2xl: 0 4px 4px rgba(0, 0, 0, 0.3), 0 8px 12px 6px rgba(0, 0, 0, 0.15);
+
+  /* ---- Type scale (Material 3) ------------------------------------------ */
+  --text-display-large: 3.5625rem;
+  --text-display-large--line-height: 4rem;
+  --text-display-large--letter-spacing: -0.0156rem;
+  --text-display-medium: 2.8125rem;
+  --text-display-medium--line-height: 3.25rem;
+  --text-display-small: 2.25rem;
+  --text-display-small--line-height: 2.75rem;
+  --text-headline-large: 2rem;
+  --text-headline-large--line-height: 2.5rem;
+  --text-headline-medium: 1.75rem;
+  --text-headline-medium--line-height: 2.25rem;
+  --text-headline-small: 1.5rem;
+  --text-headline-small--line-height: 2rem;
+  --text-title-large: 1.375rem;
+  --text-title-large--line-height: 1.75rem;
+  --text-title-medium: 1rem;
+  --text-title-medium--line-height: 1.5rem;
+  --text-title-medium--letter-spacing: 0.0094rem;
+  --text-title-medium--font-weight: 500;
+  --text-title-small: 0.875rem;
+  --text-title-small--line-height: 1.25rem;
+  --text-title-small--letter-spacing: 0.0063rem;
+  --text-title-small--font-weight: 500;
+  --text-body-large: 1rem;
+  --text-body-large--line-height: 1.5rem;
+  --text-body-large--letter-spacing: 0.0313rem;
+  --text-body-medium: 0.875rem;
+  --text-body-medium--line-height: 1.25rem;
+  --text-body-medium--letter-spacing: 0.0156rem;
+  --text-body-small: 0.75rem;
+  --text-body-small--line-height: 1rem;
+  --text-body-small--letter-spacing: 0.025rem;
+  --text-label-large: 0.875rem;
+  --text-label-large--line-height: 1.25rem;
+  --text-label-large--letter-spacing: 0.0063rem;
+  --text-label-large--font-weight: 500;
+  --text-label-medium: 0.75rem;
+  --text-label-medium--line-height: 1rem;
+  --text-label-medium--letter-spacing: 0.0313rem;
+  --text-label-medium--font-weight: 500;
+  --text-label-small: 0.6875rem;
+  --text-label-small--line-height: 1rem;
+  --text-label-small--letter-spacing: 0.0313rem;
+  --text-label-small--font-weight: 500;
+
+  /* ---- Motion ----------------------------------------------------------- */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-standard-decelerate: cubic-bezier(0, 0, 0, 1);
+  --ease-standard-accelerate: cubic-bezier(0.3, 0, 1, 1);
+
+  /* Roboto first when it is installed locally — this is a single-file offline
+     build, so no webfont can be fetched. Falls back to Discord's stack. */
+  --font-sans: 'Roboto', 'gg sans', 'Noto Sans', system-ui, -apple-system,
+    'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* ==========================================================================
+   Runtime tokens (themeable — light mode redefines these, @theme cannot)
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* Material state-layer opacities. Applied as an overlay of --sl-colour so
+     they tint whatever is underneath, rather than replacing it. */
+  --sl-colour: var(--color-on-surface);
+  --sl-hover: 0.08;
+  --sl-focus: 0.1;
+  --sl-pressed: 0.1;
+  --sl-dragged: 0.16;
+
+  /* Elevation surface tints (M3 dark scheme). */
+  --elev-tint-1: color-mix(in srgb, var(--color-primary) 5%, transparent);
+  --elev-tint-2: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  --elev-tint-3: color-mix(in srgb, var(--color-primary) 11%, transparent);
+  --elev-tint-4: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  --elev-tint-5: color-mix(in srgb, var(--color-primary) 14%, transparent);
+
+  --app-saturation: 100%;
+  --app-contrast: 1;
 }
 
 html, body, #root {
@@ -35,9 +211,9 @@ html, body, #root {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background: #313338;
-  color: #dbdee1;
-  font-family: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -45,21 +221,24 @@ html, body, #root {
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: #1a1b1e #2b2d31;
+  scrollbar-color: var(--color-surface-container-lowest) var(--color-surface-container);
 }
 
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
-*::-webkit-scrollbar-thumb { background: #1a1b1e; border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: #111214; }
+*::-webkit-scrollbar-thumb {
+  background: var(--color-surface-container-lowest);
+  border-radius: var(--radius-m3-xl);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--color-outline-variant); }
 *::-webkit-scrollbar-corner { background: transparent; }
 
-/* Thin scrollbar for server list */
+/* Thin scrollbar for the guild rail */
 .thin-scroll::-webkit-scrollbar { width: 4px; }
 .thin-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
-.thin-scroll:hover { scrollbar-color: #1a1b1e transparent; }
+.thin-scroll:hover { scrollbar-color: var(--color-surface-container-lowest) transparent; }
 .thin-scroll::-webkit-scrollbar-thumb { background: transparent; }
-.thin-scroll:hover::-webkit-scrollbar-thumb { background: #1a1b1e; }
+.thin-scroll:hover::-webkit-scrollbar-thumb { background: var(--color-surface-container-lowest); }
 
 /* Channel/member scroll */
 .channel-scroll::-webkit-scrollbar { width: 6px; }
@@ -68,6 +247,95 @@ html, body, #root {
 /* No scrollbar */
 .no-scroll::-webkit-scrollbar { display: none; }
 .no-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ==========================================================================
+   Material 3 interaction primitives
+   ========================================================================== */
+
+/* State layers.
+ *
+ * The overlay is a ::before painted above the element's own content. That is
+ * deliberate: M3 tints the whole component uniformly, icon and label included,
+ * and at 8–12% opacity it reads as a wash rather than obscuring anything.
+ *
+ * `overflow: hidden` is required so the ripple is clipped to the component
+ * bounds. Never put this class on an element whose child escapes its box (the
+ * guild-rail tooltips) — wrap such an element instead, which is what
+ * ServerList already does.
+ */
+.m3-interactive {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.m3-interactive::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--sl-colour);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms var(--ease-standard);
+}
+.m3-interactive:hover::before { opacity: var(--sl-hover); }
+.m3-interactive:focus-visible::before { opacity: var(--sl-focus); }
+.m3-interactive:active::before { opacity: var(--sl-pressed); }
+.m3-interactive[disabled]::before,
+.m3-interactive[aria-disabled="true"]::before { opacity: 0; }
+
+/* Ripple. Spawned imperatively by src/utils/ripple.ts on pointerdown. */
+.ripple {
+  position: absolute;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.16;
+  transform: scale(0);
+  pointer-events: none;
+  animation: ripple-expand 550ms var(--ease-emphasized-decelerate) forwards;
+}
+
+/* Elevation: shadow + primary surface tint, the M3 dark-scheme pairing.
+ * background-image composes over the Tailwind background-colour utility, so
+ * an element can be `bg-surface-container-high elev-3` and get both. */
+.elev-0 { box-shadow: none; }
+.elev-1 { box-shadow: var(--shadow-sm); background-image: linear-gradient(0deg, var(--elev-tint-1), var(--elev-tint-1)); }
+.elev-2 { box-shadow: var(--shadow-md); background-image: linear-gradient(0deg, var(--elev-tint-2), var(--elev-tint-2)); }
+.elev-3 { box-shadow: var(--shadow-lg); background-image: linear-gradient(0deg, var(--elev-tint-3), var(--elev-tint-3)); }
+.elev-4 { box-shadow: var(--shadow-xl); background-image: linear-gradient(0deg, var(--elev-tint-4), var(--elev-tint-4)); }
+.elev-5 { box-shadow: var(--shadow-2xl); background-image: linear-gradient(0deg, var(--elev-tint-5), var(--elev-tint-5)); }
+
+/* Visible keyboard focus. Discord has no focus indicator at all; M3 requires
+ * one, and it is the single biggest accessibility win in this redesign.
+ *
+ * Note what this deliberately does NOT do: it must not set border-radius. An
+ * earlier draft did, which snapped every focused pill button from its own
+ * radius to 4px. It also excludes nothing that needs a ring — form controls get
+ * an inset ring so it does not collide with a container that already paints one.
+ */
+:where(button, a, select, [tabindex], [role="button"]):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+:where(input, textarea):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+/* A control whose *container* paints the focus ring (the composer). Declared
+ * after the rules above so it wins the cascade without !important. */
+.ring-on-container:focus,
+.ring-on-container:focus-visible {
+  outline: none;
+}
+
+/* Selection colour follows the tonal system. */
+::selection {
+  background: color-mix(in srgb, var(--color-primary-container) 70%, transparent);
+  color: var(--color-on-primary-container);
+}
+
+/* ==========================================================================
+   Motion
+   ========================================================================== */
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
@@ -106,97 +374,175 @@ html, body, #root {
   from { opacity: 0; transform: scale(1.02); }
   to { opacity: 1; transform: scale(1); }
 }
-
-.animate-fade-in { animation: fadeIn 0.15s ease-out; }
-.animate-fade-in-fast { animation: fadeInFast 0.1s ease-out; }
-.animate-slide-left { animation: slideInLeft 0.2s ease-out; }
-.animate-slide-up { animation: slideUp 0.15s ease-out; }
-.animate-scale-in { animation: scaleIn 0.15s ease-out; }
-.animate-settings-open { animation: settingsOpen 0.2s ease-out; }
-.animate-shimmer {
-  background: linear-gradient(90deg, #2b2d31 25%, #35373c 50%, #2b2d31 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s ease-in-out infinite;
+@keyframes ripple-expand {
+  to { transform: scale(1); opacity: 0; }
 }
-.animate-progress { animation: progressBar 2s ease-in-out forwards; }
+/* Snackbar enters on the emphasized decelerate curve, per M3. */
+@keyframes snackbarIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Indeterminate progress: a bar that grows and travels. */
+@keyframes m3Indeterminate {
+  0% { left: -40%; width: 40%; }
+  50% { left: 20%; width: 60%; }
+  100% { left: 100%; width: 40%; }
+}
 
-.typing-dot { animation: typing-bounce 1.4s ease-in-out infinite; }
+.animate-fade-in { animation: fadeIn 200ms var(--ease-emphasized-decelerate); }
+.animate-fade-in-fast { animation: fadeInFast 120ms var(--ease-standard-decelerate); }
+.animate-slide-left { animation: slideInLeft 250ms var(--ease-emphasized-decelerate); }
+.animate-slide-up { animation: slideUp 200ms var(--ease-emphasized-decelerate); }
+.animate-scale-in { animation: scaleIn 250ms var(--ease-emphasized-decelerate); }
+.animate-settings-open { animation: settingsOpen 250ms var(--ease-emphasized-decelerate); }
+.animate-snackbar-in { animation: snackbarIn 300ms var(--ease-emphasized-decelerate); }
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-container) 25%,
+    var(--color-surface-container-high) 50%,
+    var(--color-surface-container) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s var(--ease-standard) infinite;
+}
+.animate-progress { animation: progressBar 2s var(--ease-emphasized) forwards; }
+
+/* M3 linear progress indicator */
+.m3-progress {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-surface-container-highest);
+  border-radius: var(--radius-m3-xl);
+}
+.m3-progress > span {
+  position: absolute;
+  inset-block: 0;
+  border-radius: inherit;
+  background: var(--color-primary);
+  animation: m3Indeterminate 1.8s var(--ease-emphasized) infinite;
+}
+
+.typing-dot { animation: typing-bounce 1.4s var(--ease-emphasized) infinite; }
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
 
-.message-hover { transition: background-color 0.05s; }
-.message-hover:hover { background: rgba(0,0,0,0.06); }
+/* ==========================================================================
+   Message list
+   ========================================================================== */
 
-/* Message action bar */
+.message-hover {
+  transition: background-color 120ms var(--ease-standard);
+  border-radius: var(--radius-m3-sm);
+}
+.message-hover:hover {
+  background: color-mix(in srgb, var(--color-on-surface) 5%, transparent);
+}
+
+/* Hover-revealed action bar. Lifted to elevation 3 and shaped like an M3
+   surface container so it reads as a floating toolbar, not a flat box. */
 .msg-actions {
   position: absolute;
-  top: -16px;
+  top: -18px;
   right: 16px;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.1s;
+  transform: translateY(4px) scale(0.96);
+  transform-origin: top right;
+  transition:
+    opacity 150ms var(--ease-standard),
+    transform 200ms var(--ease-emphasized-decelerate);
+  background: var(--color-surface-container-high);
+  border: 1px solid var(--color-outline-variant);
+  border-radius: var(--radius-m3-md);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
-.message-hover:hover .msg-actions { opacity: 1; pointer-events: all; }
+.message-hover:hover .msg-actions,
+.message-hover:focus-within .msg-actions {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateY(0) scale(1);
+}
+.msg-actions button {
+  padding: 6px;
+  color: var(--color-on-surface-variant);
+  transition: color 120ms var(--ease-standard), background-color 120ms var(--ease-standard);
+}
+.msg-actions button:hover {
+  color: var(--color-on-surface);
+  background: color-mix(in srgb, var(--color-on-surface) 8%, transparent);
+}
 
-/* Markdown */
+/* ==========================================================================
+   Rendered markdown (src/utils/markdown.ts)
+   ========================================================================== */
+
+.msg-content { color: var(--color-on-surface); }
 .msg-content strong { font-weight: 700; color: #fff; }
 .msg-content em { font-style: italic; }
 .msg-content u { text-decoration: underline; }
-.msg-content del { text-decoration: line-through; color: #949ba4; }
+.msg-content del { text-decoration: line-through; color: var(--color-on-surface-variant); }
 .msg-content code {
-  background: #2b2d31;
-  padding: 1px 4px;
-  border-radius: 3px;
+  background: var(--color-surface-container-lowest);
+  padding: 1px 5px;
+  border-radius: var(--radius-m3-xs);
   font-size: 0.85em;
-  font-family: 'Consolas', 'Courier New', monospace;
+  font-family: 'Roboto Mono', 'Consolas', 'Courier New', monospace;
+  color: var(--color-on-surface);
 }
 .msg-content pre {
-  background: #2b2d31;
-  border: 1px solid #1e1f22;
-  padding: 10px;
-  border-radius: 4px;
+  background: var(--color-surface-container-lowest);
+  border: 1px solid var(--color-outline-variant);
+  padding: 12px;
+  border-radius: var(--radius-m3-sm);
   overflow-x: auto;
-  margin: 4px 0;
+  margin: 6px 0;
   font-size: 0.85em;
-  font-family: 'Consolas', 'Courier New', monospace;
-  line-height: 1.125rem;
+  font-family: 'Roboto Mono', 'Consolas', 'Courier New', monospace;
+  line-height: 1.25rem;
 }
 .msg-content pre code { background: none; padding: 0; }
-.msg-content a { color: #00a8fc; text-decoration: none; }
+.msg-content a {
+  color: var(--color-primary);
+  text-decoration: none;
+  border-radius: var(--radius-m3-xs);
+}
 .msg-content a:hover { text-decoration: underline; }
 .msg-content blockquote {
-  border-left: 4px solid #4e5058;
+  border-left: 4px solid var(--color-outline);
+  border-radius: 0 var(--radius-m3-xs) var(--radius-m3-xs) 0;
   padding-left: 12px;
-  margin: 2px 0;
+  margin: 4px 0;
+  color: var(--color-on-surface-variant);
 }
 
-/* Discord markup rendered by src/utils/markdown.ts */
 .msg-content .msg-mention {
-  background: rgba(88, 101, 242, 0.3);
-  color: #c9cdfb;
-  padding: 0 2px;
-  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-primary-container) 45%, transparent);
+  color: var(--color-on-primary-container);
+  padding: 1px 4px;
+  border-radius: var(--radius-m3-xs);
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.1s, color 0.1s;
+  transition: background-color 150ms var(--ease-standard), color 150ms var(--ease-standard);
 }
 .msg-content .msg-mention:hover {
-  background: #5865f2;
-  color: #ffffff;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }
 .msg-content .msg-mention-self {
-  background: rgba(88, 101, 242, 0.45);
-  color: #ffffff;
+  background: var(--color-primary-container);
+  color: var(--color-on-primary-container);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 40%, transparent);
 }
 .msg-content .msg-mention-channel { cursor: pointer; }
 .msg-content .msg-mention-unknown {
-  background: rgba(148, 155, 163, 0.2);
-  color: #949ba4;
+  background: color-mix(in srgb, var(--color-on-surface-variant) 16%, transparent);
+  color: var(--color-on-surface-variant);
   cursor: default;
 }
 .msg-content .msg-mention-unknown:hover {
-  background: rgba(148, 155, 163, 0.3);
-  color: #b5bac1;
+  background: color-mix(in srgb, var(--color-on-surface-variant) 24%, transparent);
 }
 .msg-content .msg-emoji {
   display: inline-block;
@@ -206,32 +552,40 @@ html, body, #root {
   object-fit: contain;
 }
 .msg-content .msg-timestamp {
-  background: #2b2d31;
-  border-radius: 3px;
-  padding: 0 2px;
-  color: #dbdee1;
+  background: var(--color-surface-container-highest);
+  border-radius: var(--radius-m3-xs);
+  padding: 1px 4px;
+  color: var(--color-on-surface-variant);
   cursor: default;
 }
 .msg-content .msg-spoiler {
-  background: #202225;
+  background: var(--color-surface-container-highest);
   color: transparent;
-  border-radius: 3px;
-  padding: 0 2px;
+  border-radius: var(--radius-m3-xs);
+  padding: 1px 4px;
   cursor: pointer;
-  transition: background-color 0.1s, color 0.1s;
+  transition: background-color 150ms var(--ease-standard), color 150ms var(--ease-standard);
 }
 .msg-content .msg-spoiler:hover,
 .msg-content .msg-spoiler:focus,
 .msg-content .msg-spoiler:active {
-  background: rgba(32, 34, 37, 0.4);
+  background: color-mix(in srgb, var(--color-surface-container-highest) 45%, transparent);
   color: inherit;
 }
-.msg-content .msg-h { display: block; font-weight: 700; color: #f2f3f5; line-height: 1.3; }
-.msg-content .msg-h1 { font-size: 1.5em; margin: 4px 0; }
-.msg-content .msg-h2 { font-size: 1.25em; margin: 3px 0; }
-.msg-content .msg-h3 { font-size: 1.1em; margin: 2px 0; }
+.msg-content .msg-h {
+  display: block;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+}
+.msg-content .msg-h1 { font-size: 1.5em; margin: 6px 0; }
+.msg-content .msg-h2 { font-size: 1.25em; margin: 4px 0; }
+.msg-content .msg-h3 { font-size: 1.1em; margin: 3px 0; }
 
-/* Tooltip */
+/* ==========================================================================
+   M3 tooltip
+   ========================================================================== */
+
 .tooltip-container { position: relative; }
 .tooltip-container .tooltip-text {
   visibility: hidden;
@@ -239,18 +593,23 @@ html, body, #root {
   position: absolute;
   left: calc(100% + 12px);
   top: 50%;
-  transform: translateY(-50%);
-  background: #111214;
-  color: #dbdee1;
-  font-size: 14px;
+  transform: translateY(-50%) scale(0.92);
+  transform-origin: left center;
+  background: var(--color-surface-container-highest);
+  color: var(--color-on-surface);
+  font-size: 0.75rem;
   font-weight: 500;
-  padding: 6px 10px;
-  border-radius: 5px;
+  letter-spacing: 0.025rem;
+  padding: 6px 12px;
+  border-radius: var(--radius-m3-sm);
   white-space: nowrap;
   z-index: 999;
   pointer-events: none;
-  transition: opacity 0.1s, visibility 0.1s;
-  box-shadow: 0 8px 16px rgba(0,0,0,0.24);
+  box-shadow: var(--shadow-md);
+  transition:
+    opacity 120ms var(--ease-standard),
+    transform 200ms var(--ease-emphasized-decelerate),
+    visibility 120ms;
 }
 .tooltip-container .tooltip-text::before {
   content: '';
@@ -259,21 +618,28 @@ html, body, #root {
   top: 50%;
   transform: translateY(-50%);
   border: 5px solid transparent;
-  border-right-color: #111214;
+  border-right-color: var(--color-surface-container-highest);
 }
-.tooltip-container:hover .tooltip-text { visibility: visible; opacity: 1; }
+.tooltip-container:hover .tooltip-text,
+.tooltip-container:focus-within .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
 
+/* ==========================================================================
+   Responsive / mobile polish
+   ========================================================================== */
 
-/* Responsive/mobile polish */
-:root { color-scheme: dark; }
 @supports (height: 100dvh) {
   html, body, #root { height: 100dvh; }
 }
 
 @media (max-width: 767px) {
   html, body, #root { overflow: hidden; }
-  .msg-actions { right: 8px; top: -12px; }
+  .msg-actions { right: 8px; top: -14px; }
   .message-hover { padding-left: 12px; padding-right: 12px; }
+  /* 16px stops iOS zooming the viewport on focus. */
   textarea, input, button, select { font-size: 16px; }
   .channel-scroll::-webkit-scrollbar,
   .thin-scroll::-webkit-scrollbar { width: 3px; }
@@ -283,25 +649,105 @@ html, body, #root {
   .desktop-comfortable .message-hover { padding-left: 1.25rem; padding-right: 1.25rem; }
 }
 
+/* ==========================================================================
+   Settings-driven presentation
+   ========================================================================== */
 
-/* Settings-driven presentation */
+/* Light scheme. Tonal surfaces invert: elevation steps get darker/tinted
+   rather than lighter, and state layers switch to a dark overlay. */
 html.theme-light {
-  --color-discord-dark: #f2f3f5;
-  --color-discord-darker: #e3e5e8;
-  --color-discord-sidebar: #ffffff;
-  --color-discord-channel: #f9fafb;
-  --color-discord-input: #e3e5e8;
-  --color-discord-hover: #e9eaee;
-  --color-discord-active: #dfe1e5;
-  --color-discord-text: #2e3338;
-  --color-discord-text-muted: #5c626a;
-  --color-discord-header: #ffffff;
-  background: #f9fafb;
-  color: #2e3338;
+  color-scheme: light;
+
+  --color-surface: #f7f8fa;
+  --color-surface-dim: #dcdee4;
+  --color-surface-bright: #ffffff;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f2f3f7;
+  --color-surface-container: #ecedf1;
+  --color-surface-container-high: #e6e7ec;
+  --color-surface-container-highest: #e0e1e6;
+
+  --color-on-surface: #1b1c20;
+  --color-on-surface-variant: #45464f;
+  --color-outline: #767680;
+  --color-outline-variant: #c6c6d0;
+
+  --color-primary: #3d47b3;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #e0e1ff;
+  --color-on-primary-container: #000d5c;
+
+  --color-secondary: #5b5d72;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #e0e1f9;
+  --color-on-secondary-container: #181a2c;
+
+  --color-tertiary: #75546d;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #ffd7f1;
+  --color-on-tertiary-container: #2c1228;
+
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #410002;
+
+  --color-success: #146c2e;
+  --color-success-container: #c8f5d2;
+  --color-on-success-container: #002108;
+  --color-warning: #8a5300;
+  --color-warning-container: #ffdfb4;
+  --color-on-warning-container: #2b1700;
+
+  --sl-colour: #1b1c20;
+
+  --elev-tint-1: color-mix(in srgb, var(--color-primary) 3%, transparent);
+  --elev-tint-2: color-mix(in srgb, var(--color-primary) 5%, transparent);
+  --elev-tint-3: color-mix(in srgb, var(--color-primary) 7%, transparent);
+  --elev-tint-4: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  --elev-tint-5: color-mix(in srgb, var(--color-primary) 9%, transparent);
+
+  --color-discord-dark: #f2f3f7;
+  --color-discord-darker: #e6e7ec;
+  --color-discord-sidebar: #ecedf1;
+  --color-discord-channel: #f7f8fa;
+  --color-discord-input: #e0e1e6;
+  --color-discord-hover: #e6e7ec;
+  --color-discord-active: #dcdde4;
+  --color-discord-text: #1b1c20;
+  --color-discord-text-muted: #45464f;
+  --color-discord-text-link: #0b57d0;
+  --color-discord-header: #f7f8fa;
+  --color-discord-card: #ffffff;
+  --color-discord-popout: #ffffff;
+  --color-discord-border: #c6c6d0;
+
+  background: var(--color-surface);
+  color: var(--color-on-surface);
 }
 html.theme-light body,
-html.theme-light #root { background: #f9fafb; color: #2e3338; }
-html.reduced-motion *, html.reduced-motion *::before, html.reduced-motion *::after {
+html.theme-light #root {
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+}
+/* Light surfaces need visible hairlines; dark ones rely on tonal contrast. */
+html.theme-light .msg-content code,
+html.theme-light .msg-content pre {
+  background: var(--color-surface-container-highest);
+}
+html.theme-light .msg-content strong,
+html.theme-light .msg-content .msg-h { color: #000; }
+html.theme-light .elev-1,
+html.theme-light .elev-2,
+html.theme-light .elev-3,
+html.theme-light .elev-4,
+html.theme-light .elev-5 {
+  border: 1px solid var(--color-outline-variant);
+}
+
+html.reduced-motion *,
+html.reduced-motion *::before,
+html.reduced-motion *::after {
   animation-duration: 0.001ms !important;
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
@@ -318,11 +764,14 @@ html.reduced-motion *, html.reduced-motion *::before, html.reduced-motion *::aft
  * The filter is only switched on when a setting actually needs it, so the
  * default state pays no compositing cost.
  */
-html { --app-saturation: 100%; --app-contrast: 1; }
 html.high-contrast { --app-contrast: 1.12; }
 html.high-contrast,
 html.app-saturated {
   filter: saturate(var(--app-saturation)) contrast(var(--app-contrast));
 }
 html.streamer-mode .select-all { filter: blur(4px); user-select: none; }
-html.compact-mode .message-hover { margin-top: 2px !important; padding-top: 1px !important; padding-bottom: 1px !important; }
+html.compact-mode .message-hover {
+  margin-top: 2px !important;
+  padding-top: 1px !important;
+  padding-bottom: 1px !important;
+}
