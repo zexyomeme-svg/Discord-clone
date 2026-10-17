@@ -45,6 +45,170 @@ jobs:
       - name: Dependency audit (documented allowlist)
         run: npm run audit:review
 
+  docker:
+    name: Docker image (build + smoke test)
+    runs-on: ubuntu-latest
+    env:
+      SMOKE_KEY: ci-smoke-test-key-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+
+      # This image is what Railway builds automatically and what render.yaml
+      # points Render at, so it is the one artifact CI must prove actually runs.
+      - name: Build the image
+        run: docker build -t disclone:ci .
+
+      - name: Start the container
+        run: |
+          docker run -d --name disclone-ci \
+            -e PORT=8080 \
+            -e SECRET_KEY="$SMOKE_KEY" \
+            -p 8080:8080 \
+            disclone:ci
+
+      - name: Wait for /healthz
+        run: |
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8080/healthz -o /dev/null; then
+              echo "healthy after $i attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "container never became healthy"
+          exit 1
+
+      - name: Smoke-test the running container
+        run: |
+          python3 - <<'PY'
+          import json, sys, urllib.request
+
+          BASE = "http://127.0.0.1:8080"
+
+          def get(path):
+              with urllib.request.urlopen(BASE + path, timeout=15) as r:
+                  return r.status, r.read().decode("utf-8")
+
+          failures = []
+
+          status, body = get("/healthz")
+          health = json.loads(body)
+          print("healthz:", json.dumps(health, indent=2))
+          if status != 200:
+              failures.append("healthz status %s" % status)
+          if health.get("status") != "ok":
+              failures.append("healthz status field: %r" % health.get("status"))
+          if health.get("frontendBuilt") is not True:
+              failures.append("frontend was not baked into the image")
+          if health.get("platform") != "local":
+              failures.append("platform %r with no host vars set" % health.get("platform"))
+          if health.get("publicBaseUrl") is not None:
+              failures.append("invented a public URL: %r" % health.get("publicBaseUrl"))
+
+          status, body = get("/api/app-info")
+          info = json.loads(body)
+          print("app-info:", json.dumps(info, indent=2))
+          if status != 200:
+              failures.append("app-info status %s" % status)
+          if not (info.get("githubUrl") or "").startswith("https://github.com/"):
+              failures.append("githubUrl missing: %r" % info.get("githubUrl"))
+          if not info.get("presenceText"):
+              failures.append("presenceText empty")
+
+          status, body = get("/")
+          if status != 200:
+              failures.append("SPA status %s" % status)
+          if "id=" not in body or "root" not in body:
+              failures.append("SPA index.html does not look like the built bundle")
+          if len(body) < 100_000:
+              failures.append("bundle suspiciously small: %d bytes" % len(body))
+
+          status, body = get("/api/discord/users/@me")
+          if status == 200:
+              failures.append("proxy answered without an upstream token")
+
+          if failures:
+              print("\nFAILURES:")
+              for f in failures:
+                  print("  -", f)
+              sys.exit(1)
+          print("\ncontainer smoke test: all assertions passed")
+          PY
+
+      # Prove the platform derivation works in the real image, not just under
+      # pytest: Railway injects a bare host, Render injects a full URL.
+      - name: Verify platform-injected public URLs inside the image
+        run: |
+          start_and_wait () {
+            name="$1"; port="$2"; shift 2
+            docker run -d --name "$name" \
+              -e PORT="$port" -e SECRET_KEY="$SMOKE_KEY" \
+              -p "$port:$port" "$@" disclone:ci >/dev/null
+            for i in $(seq 1 45); do
+              if curl -fsS "http://127.0.0.1:$port/healthz" -o "/tmp/$name.json"; then
+                echo "$name healthy after $i attempt(s)"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "$name never became healthy"
+            return 1
+          }
+
+          start_and_wait railway 8081 \
+            -e RAILWAY_SERVICE_NAME=disclone \
+            -e RAILWAY_PUBLIC_DOMAIN=disclone-production.up.railway.app \
+            -e RAILWAY_PRIVATE_DOMAIN=disclone.railway.internal
+
+          start_and_wait render 8082 \
+            -e RENDER=true \
+            -e RENDER_SERVICE_ID=srv-ci \
+            -e RENDER_EXTERNAL_URL=https://myapp.onrender.com
+
+          python3 - <<'PY'
+          import json, sys
+
+          failures = []
+          railway = json.load(open("/tmp/railway.json"))
+          render = json.load(open("/tmp/render.json"))
+          print("railway healthz:", json.dumps(railway, indent=2))
+          print("render  healthz:", json.dumps(render, indent=2))
+
+          if railway.get("platform") != "railway":
+              failures.append("railway platform %r" % railway.get("platform"))
+          if railway.get("publicBaseUrl") != "https://disclone-production.up.railway.app":
+              failures.append("railway url %r (a bare host needs an https scheme)"
+                              % railway.get("publicBaseUrl"))
+          if railway.get("publicBaseUrlSource") != "railway-injected":
+              failures.append("railway source %r" % railway.get("publicBaseUrlSource"))
+
+          if render.get("platform") != "render":
+              failures.append("render platform %r" % render.get("platform"))
+          if render.get("publicBaseUrl") != "https://myapp.onrender.com":
+              failures.append("render url %r" % render.get("publicBaseUrl"))
+          if render.get("publicBaseUrlSource") != "render-injected":
+              failures.append("render source %r" % render.get("publicBaseUrlSource"))
+
+          if failures:
+              print("\nFAILURES:")
+              for f in failures:
+                  print("  -", f)
+              sys.exit(1)
+          print("\nplatform injection verified inside the image")
+          PY
+
+      - name: Container logs
+        if: failure()
+        run: |
+          for name in disclone-ci disclone-railway disclone-render; do
+            echo "===== $name ====="
+            docker logs "$name" 2>&1 || true
+          done
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f disclone-ci disclone-railway disclone-render >/dev/null 2>&1 || true
+
   backend:
     name: Backend (Flask tests)
     runs-on: ubuntu-latest

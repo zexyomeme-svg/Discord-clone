@@ -1,0 +1,75 @@
+# Build context for the root Dockerfile.
+#
+# The two entries that actually matter are node_modules and dist:
+#
+#   * node_modules/ contains native binaries built for the host's platform and
+#     libc (@tailwindcss/oxide ships prebuilt platform packages). Copying a
+#     host-built tree into a linux/amd64 image produces failures that look
+#     nothing like their cause, so stage 1 always runs its own `npm ci`.
+#   * dist/ would let a stale local bundle shadow what stage 1 just built.
+#
+# Everything else here is size and hygiene.
+
+# Version control and CI.
+.git
+.gitignore
+.github
+
+# Dependencies and build output — rebuilt inside the image.
+**/node_modules
+**/dist
+**/.nodeenv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.tsbuildinfo
+
+# Local Python environments. A broken virtualenv (.local/) was committed to this
+# repository once; it must never reach a build context either.
+.local
+.venv
+venv
+env
+ENV
+
+# Build-worker state and logs.
+**/.frontend_build_status.json
+**/.frontend_build.lock
+**/.frontend_build.log
+**/*.log
+
+# Secrets and local environment files. `.env.example` is documentation and is
+# deliberately kept so the image can be inspected for what it expects.
+.env
+**/.env
+.env.*
+!**/.env.example
+**/.flask_secret_key
+**/.flask_secret_key.tmp.*
+*.pem
+*.key
+*.token
+
+# Not needed to build or run the image. Root-level names are listed explicitly
+# alongside the **/ forms rather than relying on **/ matching zero directories.
+Dockerfile
+.dockerignore
+render.yaml
+**/render.yaml
+railway.json
+**/railway.json
+railway.toml
+**/railway.toml
+README.md
+**/README.md
+tests
+**/tests
+coverage
+**/coverage
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+**/*.swp

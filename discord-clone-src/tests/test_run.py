@@ -831,3 +831,294 @@ def test_app_info_leaks_no_secrets(client):
     blob = json.dumps(body).lower()
     for forbidden in ("secret", "token", "client_id", "cookie"):
         assert forbidden not in blob
+
+
+# ---------------------------------------------------------------------------
+# Hosting platform detection — the same code must work on Render and Railway
+# ---------------------------------------------------------------------------
+
+def test_platform_is_local_when_no_host_variables_are_present(make_app):
+    run = make_app()
+    assert run.PLATFORM == "local"
+    assert run.PUBLIC_BASE_URL == ""
+    assert run.PUBLIC_BASE_URL_SOURCE == "unset"
+
+
+def test_render_is_detected_and_supplies_the_public_url(make_app):
+    run = make_app({
+        "RENDER": "true",
+        "RENDER_SERVICE_ID": "srv-abc123",
+        "RENDER_EXTERNAL_URL": "https://myapp.onrender.com",
+    })
+    assert run.PLATFORM == "render"
+    assert run.PUBLIC_BASE_URL == "https://myapp.onrender.com"
+    assert run.PUBLIC_BASE_URL_SOURCE == "render-injected"
+
+
+def test_render_is_detected_from_the_service_id_alone(make_app):
+    """RENDER=true is documented, but RENDER_SERVICE_ID is the sturdier signal."""
+    run = make_app({"RENDER_SERVICE_ID": "srv-abc123"})
+    assert run.PLATFORM == "render"
+
+
+def test_railway_is_detected_and_gains_an_https_scheme(make_app):
+    """Railway injects a bare host, not a URL — the scheme has to be added."""
+    run = make_app({
+        "RAILWAY_SERVICE_NAME": "disclone",
+        "RAILWAY_PROJECT_ID": "proj-1",
+        "RAILWAY_PUBLIC_DOMAIN": "disclone-production.up.railway.app",
+        "RAILWAY_PRIVATE_DOMAIN": "disclone.railway.internal",
+    })
+    assert run.PLATFORM == "railway"
+    assert run.PUBLIC_BASE_URL == "https://disclone-production.up.railway.app"
+    assert run.PUBLIC_BASE_URL_SOURCE == "railway-injected"
+
+
+def test_railway_without_a_public_domain_fails_closed(make_app):
+    """No generated domain means no public URL; OAuth must not invent one."""
+    run = make_app({
+        "RAILWAY_SERVICE_NAME": "disclone",
+        "RAILWAY_PRIVATE_DOMAIN": "disclone.railway.internal",
+        "DISCORD_CLIENT_ID": "cid",
+        "DISCORD_CLIENT_SECRET": "sec",
+    })
+    assert run.PLATFORM == "railway"
+    assert run.PUBLIC_BASE_URL == ""
+    # The test client otherwise defaults Host to `localhost`, which is trusted
+    # on purpose so local development needs no configuration. Send the host a
+    # real Railway request would carry.
+    res = run.app.test_client().get(
+        "/api/oauth/config",
+        headers={"Host": "disclone-production.up.railway.app"},
+    )
+    body = res.get_json()
+    assert body["enabled"] is False
+    assert body["redirectUri"] is None
+    # The warning has to say what to actually do on this platform.
+    assert "Networking" in body["warning"]
+    assert "RAILWAY_PUBLIC_DOMAIN" in body["warning"]
+
+
+def test_railway_private_domain_is_never_used_as_a_public_url(make_app):
+    """The .railway.internal name is not reachable from a browser."""
+    run = make_app({
+        "RAILWAY_PRIVATE_DOMAIN": "disclone.railway.internal",
+        "RAILWAY_SERVICE_NAME": "disclone",
+    })
+    assert "railway.internal" not in run.PUBLIC_BASE_URL
+
+
+def test_explicit_public_base_url_beats_the_platform_value(make_app):
+    """A custom domain or preview environment is the operator's call."""
+    run = make_app({
+        "PUBLIC_BASE_URL": "https://chat.example.com",
+        "RENDER": "true",
+        "RENDER_EXTERNAL_URL": "https://myapp.onrender.com",
+    })
+    assert run.PUBLIC_BASE_URL == "https://chat.example.com"
+    assert run.PUBLIC_BASE_URL_SOURCE == "PUBLIC_BASE_URL"
+
+
+def test_custom_domain_via_railway_public_domain(make_app):
+    run = make_app({
+        "RAILWAY_PUBLIC_DOMAIN": "chat.example.com",
+        "RAILWAY_SERVICE_NAME": "disclone",
+    })
+    assert run.PUBLIC_BASE_URL == "https://chat.example.com"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["javascript:alert(1)", "file:///etc/passwd", "//myapp.onrender.com", "data:text/html,x"],
+)
+def test_a_non_http_scheme_injected_as_the_public_url_is_rejected(make_app, value):
+    """These become OAuth redirect bases, so anything but http(s) is dropped."""
+    run = make_app({"RENDER": "true", "RENDER_EXTERNAL_URL": value})
+    assert run.PUBLIC_BASE_URL == ""
+    assert run.PUBLIC_BASE_URL_SOURCE == "unset"
+
+
+def test_other_platforms_are_named_but_do_not_invent_a_url(make_app):
+    assert make_app({"FLY_APP_NAME": "disclone-fly"}).PLATFORM == "fly"
+    assert make_app({"DYNO": "web.1"}).PLATFORM == "heroku"
+    assert make_app({"FLY_APP_NAME": "x"}).PUBLIC_BASE_URL == ""
+
+
+def test_healthz_reports_the_platform_and_url_source(make_app):
+    run = make_app({
+        "RENDER": "true",
+        "RENDER_EXTERNAL_URL": "https://myapp.onrender.com",
+    })
+    body = run.app.test_client().get("/healthz").get_json()
+    assert body["platform"] == "render"
+    assert body["publicBaseUrl"] == "https://myapp.onrender.com"
+    assert body["publicBaseUrlSource"] == "render-injected"
+
+
+def test_healthz_reports_a_null_url_when_none_is_known(make_app):
+    body = make_app().app.test_client().get("/healthz").get_json()
+    assert body["publicBaseUrl"] is None
+    assert body["platform"] == "local"
+
+
+def test_oauth_redirect_uri_is_derived_on_render(make_app):
+    run = make_app({
+        "RENDER": "true",
+        "RENDER_EXTERNAL_URL": "https://myapp.onrender.com",
+        "DISCORD_CLIENT_ID": "cid",
+        "DISCORD_CLIENT_SECRET": "sec",
+    })
+    body = run.app.test_client().get("/api/oauth/config").get_json()
+    assert body["enabled"] is True
+    assert body["redirectUri"] == "https://myapp.onrender.com/auth/discord/callback"
+
+
+def test_oauth_redirect_uri_is_derived_on_railway(make_app):
+    run = make_app({
+        "RAILWAY_PUBLIC_DOMAIN": "disclone-production.up.railway.app",
+        "RAILWAY_SERVICE_NAME": "disclone",
+        "DISCORD_CLIENT_ID": "cid",
+        "DISCORD_CLIENT_SECRET": "sec",
+    })
+    body = run.app.test_client().get("/api/oauth/config").get_json()
+    assert body["enabled"] is True
+    assert body["redirectUri"] == (
+        "https://disclone-production.up.railway.app/auth/discord/callback"
+    )
+
+
+def test_attribution_follows_the_platform_url(make_app):
+    """A Railway deploy must advertise Railway, not this project's Render URL."""
+    run = make_app({
+        "RAILWAY_PUBLIC_DOMAIN": "disclone-production.up.railway.app",
+        "RAILWAY_SERVICE_NAME": "disclone",
+    })
+    body = run.app.test_client().get("/api/app-info").get_json()
+    assert body["siteUrl"] == "https://disclone-production.up.railway.app"
+    assert body["siteDisplay"] == "disclone-production.up.railway.app"
+    assert "onrender.com" not in body["presenceText"]
+
+
+def test_a_forwarded_host_still_cannot_override_the_platform_url(make_app):
+    run = make_app({
+        "RENDER": "true",
+        "RENDER_EXTERNAL_URL": "https://myapp.onrender.com",
+        "DISCORD_CLIENT_ID": "cid",
+        "DISCORD_CLIENT_SECRET": "sec",
+    })
+    res = run.app.test_client().get("/auth/discord/login", headers={
+        "Host": "attacker.example",
+        "X-Forwarded-Host": "evil.example.com",
+    })
+    assert res.status_code in (302, 503)
+    location = res.headers.get("Location", "")
+    assert "evil.example.com" not in location
+    assert "attacker.example" not in location
+    if location:
+        assert "myapp.onrender.com" in location
+
+
+# ---------------------------------------------------------------------------
+# SECRET_KEY resolution across Gunicorn workers
+# ---------------------------------------------------------------------------
+
+def test_explicit_secret_key_always_wins(make_app, tmp_path):
+    run = make_app({"SECRET_KEY": "explicit"})
+    assert run.app.secret_key == "explicit"
+
+
+def test_an_existing_key_file_is_reused_not_regenerated(make_app, tmp_path, monkeypatch):
+    """A restart must not invalidate an in-flight OAuth handoff cookie."""
+    # Empty SECRET_KEY, otherwise the explicit-value branch returns first and
+    # this test would pass without exercising the file logic at all.
+    run = make_app({"SECRET_KEY": ""})
+    key_file = tmp_path / ".flask_secret_key"
+    key_file.write_text("persisted-key", encoding="utf-8")
+    monkeypatch.setattr(run, "SECRET_FILE", key_file)
+    monkeypatch.setattr(run, "FALLBACK_SECRET_FILE", tmp_path / "fallback")
+    assert run._resolve_secret_key() == "persisted-key"
+
+
+def test_a_generated_key_is_persisted_for_other_workers(make_app, tmp_path, monkeypatch):
+    run = make_app({"SECRET_KEY": ""})
+    key_file = tmp_path / ".flask_secret_key"
+    monkeypatch.setattr(run, "SECRET_FILE", key_file)
+    monkeypatch.setattr(run, "FALLBACK_SECRET_FILE", tmp_path / "fallback")
+
+    first = run._resolve_secret_key()
+    assert first
+    assert key_file.read_text(encoding="utf-8").strip() == first
+    # A second worker starting later reads the same key rather than making one.
+    assert run._resolve_secret_key() == first
+
+
+def test_concurrent_workers_converge_on_one_key(make_app, tmp_path, monkeypatch):
+    """The actual multi-worker bug: two workers claiming at once.
+
+    os.replace() makes each write atomic and the post-write re-read makes both
+    callers return whatever landed last, so the OAuth cookie signed by one
+    worker still verifies in the other.
+    """
+    run = make_app()
+    key_file = tmp_path / ".flask_secret_key"
+    monkeypatch.setattr(run, "SECRET_FILE", key_file)
+    monkeypatch.setattr(run, "FALLBACK_SECRET_FILE", tmp_path / "fallback")
+
+    run._claim_secret_file(key_file, "worker-a-key")
+    second = run._claim_secret_file(key_file, "worker-b-key")
+
+    assert second == "worker-b-key"
+    assert key_file.read_text(encoding="utf-8").strip() == second
+    # And a later read agrees with it.
+    assert run._read_secret(key_file) == second
+
+
+def test_an_unwritable_app_dir_falls_back_to_a_shared_runtime_dir(
+    make_app, tmp_path, monkeypatch
+):
+    """Container images are frequently read-only outside /tmp.
+
+    Every worker in one container shares /tmp, which is exactly what a shared
+    signing key needs, so the fallback keeps multi-worker OAuth working on a
+    read-only image instead of degrading to per-process keys.
+    """
+    run = make_app({"SECRET_KEY": ""})
+
+    # A path whose parent is a regular file can never be created.
+    blocker = tmp_path / "read-only-app-dir"
+    blocker.write_text("not a directory", encoding="utf-8")
+    unwritable = blocker / ".flask_secret_key"
+
+    fallback = tmp_path / "runtime" / "disclone_flask_secret_key"
+    monkeypatch.setattr(run, "SECRET_FILE", unwritable)
+    monkeypatch.setattr(run, "FALLBACK_SECRET_FILE", fallback)
+
+    key = run._resolve_secret_key()
+    assert key and len(key) >= 32
+    assert not unwritable.exists()
+    assert fallback.read_text(encoding="utf-8").strip() == key
+
+
+def test_a_second_worker_reuses_the_fallback_key(make_app, tmp_path, monkeypatch):
+    """The fallback must be shared, not per-process."""
+    run = make_app({"SECRET_KEY": ""})
+    blocker = tmp_path / "read-only-app-dir"
+    blocker.write_text("not a directory", encoding="utf-8")
+    fallback = tmp_path / "runtime" / "disclone_flask_secret_key"
+    monkeypatch.setattr(run, "SECRET_FILE", blocker / ".flask_secret_key")
+    monkeypatch.setattr(run, "FALLBACK_SECRET_FILE", fallback)
+
+    first = run._resolve_secret_key()
+    assert first and len(first) >= 32
+    assert run._resolve_secret_key() == first
+    assert fallback.read_text(encoding="utf-8").strip() == first
+
+
+def test_claim_secret_file_reports_failure_rather_than_raising(make_app, tmp_path):
+    run = make_app()
+    # A path whose parent is a regular file cannot be created.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    impossible = blocker / "sub" / "key"
+    assert run._claim_secret_file(impossible, "candidate") is None
+    assert run._read_secret(impossible) is None

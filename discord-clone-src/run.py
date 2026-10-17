@@ -1,8 +1,14 @@
-"""Render-ready Flask entrypoint for the Discord clone.
+"""Hosting-agnostic Flask entrypoint for the Discord clone (Render + Railway).
 
 This app serves the Vite production build from ./dist and exposes a small
 same-origin proxy at /api/discord/* so the React app can call Discord's REST API
 without relying on public CORS proxies.
+
+It runs unchanged on Render, Railway, a local machine, or any other host that
+provides a `PORT` environment variable. Platform-specific behaviour is limited
+to two things, both handled below: deriving the deployment's public URL from the
+host's own read-only environment variables, and detecting which host we are on
+so `/healthz` can report it.
 
 Frontend install/build/check work lives in `build_frontend.py`. `run.py` starts
 the web server immediately and, when the build output is missing, launches that
@@ -16,7 +22,11 @@ Security notes
 * Absolute URLs (OAuth redirect URIs) are only ever built from `PUBLIC_BASE_URL`
   or a host listed in `TRUSTED_HOSTS`. Request headers such as
   `X-Forwarded-Host` are not trusted on their own, so the redirect URI cannot be
-  pointed at an attacker-controlled domain.
+  pointed at an attacker-controlled domain. When `PUBLIC_BASE_URL` is unset it
+  falls back to the host's own injected public URL (`RENDER_EXTERNAL_URL` on
+  Render, `RAILWAY_PUBLIC_DOMAIN` on Railway). Those are set by the platform and
+  cannot be overridden by a request — on Railway they cannot even be overridden
+  from the dashboard — so the fallback does not weaken that rule.
 * The OAuth2 access token is handed back to the SPA in a signed, short-lived
   cookie and collected once via POST /api/oauth/exchange. It never appears in a
   URL, so it cannot leak through access logs, browser history or Referer.
@@ -30,6 +40,7 @@ import os
 import secrets
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -44,12 +55,86 @@ BASE_DIR = Path(__file__).resolve().parent
 DIST_DIR = BASE_DIR / "dist"
 INDEX_FILE = DIST_DIR / "index.html"
 SECRET_FILE = BASE_DIR / ".flask_secret_key"
+# Container filesystems are frequently read-only outside /tmp, and every worker
+# inside one container shares /tmp — which is exactly what a shared signing key
+# needs. See `_resolve_secret_key`.
+FALLBACK_SECRET_FILE = Path(tempfile.gettempdir()) / "disclone_flask_secret_key"
+
+
+# ---------------------------------------------------------------------------
+# Hosting platform detection.
+#
+# Render and Railway each inject their own public address as a read-only
+# environment variable, so an OAuth redirect URI can be derived with no operator
+# configuration. Render sets RENDER=true plus RENDER_EXTERNAL_URL (a full URL)
+# for web services; Railway sets RAILWAY_PUBLIC_DOMAIN (a bare host such as
+# `app.up.railway.app`) once a public domain is generated.
+# ---------------------------------------------------------------------------
+def _detect_platform() -> str:
+    """Best-effort name of the hosting platform, for logs and /healthz."""
+    render = os.environ.get("RENDER", "").strip().lower()
+    if render == "true" or os.environ.get("RENDER_SERVICE_ID", "").strip():
+        return "render"
+    railway_keys = (
+        "RAILWAY_PUBLIC_DOMAIN",
+        "RAILWAY_PRIVATE_DOMAIN",
+        "RAILWAY_SERVICE_NAME",
+        "RAILWAY_PROJECT_ID",
+        "RAILWAY_ENVIRONMENT_NAME",
+    )
+    if any(os.environ.get(k, "").strip() for k in railway_keys):
+        return "railway"
+    if os.environ.get("FLY_APP_NAME", "").strip():
+        return "fly"
+    if os.environ.get("DYNO", "").strip():
+        return "heroku"
+    return "local"
+
+
+PLATFORM = _detect_platform()
+
+
+def _platform_public_url() -> str:
+    """The deployment's public URL as reported by the host, else "".
+
+    Only http(s) values are accepted. The inputs are platform-controlled rather
+    than request-controlled, but refusing anything else keeps a surprising value
+    from ever becoming an OAuth redirect base.
+    """
+    candidates: list[str] = []
+
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    if render_url:
+        candidates.append(render_url)
+
+    railway_host = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
+    if railway_host:
+        # Railway injects a bare host; Railway-provided domains are always TLS.
+        candidates.append(
+            railway_host if "://" in railway_host else f"https://{railway_host}"
+        )
+
+    for candidate in candidates:
+        scheme = urlsplit(candidate).scheme.lower()
+        if scheme in {"http", "https"}:
+            return candidate
+    return ""
+
 
 DISCORD_API_BASE = os.environ.get("DISCORD_API_BASE", "https://discord.com/api/v10").rstrip("/")
 DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "").strip()
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "").strip()
 DISCORD_OAUTH_SCOPES = os.environ.get("DISCORD_OAUTH_SCOPES", "identify email guilds").strip()
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+# An explicit PUBLIC_BASE_URL always wins: it is the operator's answer for a
+# custom domain, a preview environment, or a host that injects nothing. Only
+# when it is absent do we use the platform's own reported address.
+_EXPLICIT_PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+PUBLIC_BASE_URL = _EXPLICIT_PUBLIC_BASE_URL or _platform_public_url()
+PUBLIC_BASE_URL_SOURCE = (
+    "PUBLIC_BASE_URL" if _EXPLICIT_PUBLIC_BASE_URL
+    else f"{PLATFORM}-injected" if PUBLIC_BASE_URL
+    else "unset"
+)
 OAUTH_STATE_MAX_AGE = int(os.environ.get("OAUTH_STATE_MAX_AGE", "600"))
 # Lifetime of the one-time OAuth handoff cookie. Short on purpose.
 OAUTH_HANDOFF_MAX_AGE = int(os.environ.get("OAUTH_HANDOFF_MAX_AGE", "120"))
@@ -208,35 +293,77 @@ def _kick_background_build(*, force: bool = False, check: bool = False) -> None:
 
 # ---------------------------------------------------------------------------
 # Secret key. Needed to sign the OAuth handoff cookie. Persisted to a gitignored
-# file so multiple Gunicorn workers on the same dyno share one key; in a real
-# deployment set SECRET_KEY explicitly.
+# file so every Gunicorn worker in the container shares ONE key; in a real
+# deployment set SECRET_KEY explicitly, because both locations are ephemeral on
+# Render and Railway and a redeploy otherwise invalidates in-flight logins.
 # ---------------------------------------------------------------------------
+def _read_secret(path: Path) -> str | None:
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def _claim_secret_file(path: Path, candidate: str) -> str | None:
+    """Persist `candidate`, then return the value that actually won.
+
+    Gunicorn workers import this module concurrently. A naive read-then-write
+    lets each worker generate its own key, and an OAuth handoff cookie signed by
+    worker A then fails verification in worker B — an intermittent login failure
+    that is miserable to diagnose. Writing to a per-pid temp file and calling
+    os.replace() makes the swap atomic (no reader ever sees a partial key), and
+    re-reading afterwards makes every worker converge on whichever key landed
+    last, even when two of them raced.
+
+    Returns None when `path` is not writable, so the caller can try the next
+    location — container images are commonly read-only outside /tmp.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        tmp.write_text(candidate, encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            # Mode is best-effort; a restrictive umask may already cover it.
+            pass
+        os.replace(tmp, path)
+    except OSError:
+        return None
+    return _read_secret(path) or candidate
+
+
 def _resolve_secret_key() -> str:
     configured = os.environ.get("SECRET_KEY", "").strip()
     if configured:
         return configured
 
-    try:
-        existing = SECRET_FILE.read_text(encoding="utf-8").strip()
+    # BASE_DIR first (it survives a restart wherever the filesystem is
+    # persistent), then a writable runtime dir that the container's workers share.
+    for path in (SECRET_FILE, FALLBACK_SECRET_FILE):
+        existing = _read_secret(path)
         if existing:
             return existing
-    except OSError:
-        pass
+        claimed = _claim_secret_file(path, secrets.token_urlsafe(48))
+        if claimed:
+            if path is not SECRET_FILE:
+                print(
+                    f"[startup] note: SECRET_KEY not set; persisted a shared key to {path} "
+                    "for this container's workers. Set SECRET_KEY explicitly to keep it "
+                    "stable across deploys.",
+                    flush=True,
+                )
+            return claimed
 
-    generated = secrets.token_urlsafe(48)
-    try:
-        # Best-effort persistence. Create-then-rename avoids a partial read by a
-        # concurrently starting worker.
-        tmp = SECRET_FILE.with_suffix(f".tmp.{os.getpid()}")
-        tmp.write_text(generated, encoding="utf-8")
-        os.replace(tmp, SECRET_FILE)
-        try:
-            os.chmod(SECRET_FILE, 0o600)
-        except OSError:
-            pass
-    except OSError as exc:
-        print(f"[startup] warning: could not persist SECRET_KEY ({exc}); using a per-process key", file=sys.stderr, flush=True)
-    return generated
+    print(
+        "[startup] warning: no writable location for SECRET_KEY, so each worker "
+        "generated its own key. The OAuth2 handoff cookie will not verify across "
+        "workers. Set SECRET_KEY explicitly.",
+        file=sys.stderr,
+        flush=True,
+    )
+    return secrets.token_urlsafe(48)
 
 
 app = Flask(__name__, static_folder=None)
@@ -566,6 +693,13 @@ def healthz() -> tuple[dict[str, Any], int]:
         "buildMessage": status.get("message"),
         "backgroundBuild": BACKGROUND_BUILD,
         "oauthConfigured": _oauth_configured(),
+        # Deployment diagnostics. Both values are already public by definition —
+        # the platform name is obvious from the hostname, and the base URL is
+        # the address the caller just used — but seeing them here turns "why did
+        # OAuth fail closed?" into a single request.
+        "platform": PLATFORM,
+        "publicBaseUrl": PUBLIC_BASE_URL or None,
+        "publicBaseUrlSource": PUBLIC_BASE_URL_SOURCE,
     }, 200
 
 
@@ -581,7 +715,11 @@ def oauth_config() -> tuple[dict[str, Any], int]:
     if _oauth_configured() and not redirect_uri:
         payload["warning"] = (
             "OAuth2 credentials are set but no trusted public URL is available. "
-            "Set PUBLIC_BASE_URL (or TRUSTED_HOSTS / DISCORD_REDIRECT_URI)."
+            "Set PUBLIC_BASE_URL (or TRUSTED_HOSTS / DISCORD_REDIRECT_URI). "
+            f"Detected platform: {PLATFORM}. On Render, RENDER_EXTERNAL_URL is "
+            "injected automatically for web services; on Railway, generate a "
+            "public domain under Settings > Networking so RAILWAY_PUBLIC_DOMAIN "
+            "is populated."
         )
     return payload, 200
 
@@ -894,5 +1032,10 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", "8000"))
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    print(
+        f"[startup] platform={PLATFORM} public_base_url={PUBLIC_BASE_URL or '(unset)'} "
+        f"source={PUBLIC_BASE_URL_SOURCE}",
+        flush=True,
+    )
     print(f"[startup] Starting Flask on 0.0.0.0:{port} (frontend build never blocks startup)", flush=True)
     app.run(host="0.0.0.0", port=port, debug=debug)

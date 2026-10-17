@@ -1,10 +1,12 @@
-# Discord Clone — Render Ready
+# Discord Clone — Render & Railway Ready
 
 A Discord-style web client built with React 19, Vite 7, Tailwind CSS 4, and Zustand, served in production by a small Flask app.
 
 The client authenticates with a Discord **bot token** entered in the login form, or with official **Discord OAuth2** sign-in. Personal account/user tokens are intentionally not supported.
 
 Startup is optimised for speed: **`run.py` never blocks on `npm install` or a Vite build**. That work lives in **`build_frontend.py`**, which `run.py` can launch in the background so the site becomes reachable immediately.
+
+One **`Dockerfile`** at the repository root builds the identical image for **Render** and **Railway**, so the two hosts cannot drift. Nothing else about the app is platform-specific: `run.py` reads `PORT`, detects which host it is on, and derives its own public URL from the host's injected variables, so OAuth2 and attribution need no per-platform configuration.
 
 > **Important:** This project is intended for official bot-token based testing and development. Keep tokens private, never commit secrets, and follow Discord's Developer Terms and API rules.
 
@@ -59,43 +61,55 @@ CI runs all of the above on every push (`.github/workflows/ci.yml`).
 ## Project structure
 
 ```text
-.
-├── run.py                     # Flask/Gunicorn entrypoint (fast startup, API proxy, OAuth2)
-├── build_frontend.py          # Frontend install/build/check worker
-├── requirements.txt           # Runtime Python dependencies
-├── requirements-dev.txt       # Adds pytest
-├── render.yaml                # Render Blueprint config
-├── package.json               # Frontend dependencies and scripts
-├── vite.config.ts             # Vite build config + dev-server API proxy
-├── vitest.config.ts           # Unit test config (separate from the app build)
-├── pytest.ini                 # Backend test config
-├── index.html
-├── scripts/
-│   └── audit-check.mjs        # Dependency audit gate with a justified allowlist
-├── tests/
-│   ├── markdown.test.ts       # Renderer output + XSS resistance
-│   ├── messageFormat.test.ts  # Grouping/timestamp rules
-│   ├── discordApi.test.ts     # Validation limits, CDN URLs, presence helpers
-│   ├── conftest.py            # Flask test fixtures
-│   └── test_run.py            # Routing, proxy and OAuth2 security tests
-├── dist/                      # Production build (gitignored, served by Flask)
-└── src/
-    ├── components/            # React UI components (Material 3)
-    │   ├── Composer.tsx       # Message input, shared by the guild and DM views
-    │   ├── GithubMark.tsx     # GitHub logo (lucide-react dropped brand icons)
-    │   └── …                  # ServerList, ChannelList, DMList, MessageArea,
-    │                          #   DMMessageArea, MemberList, UserPanel,
-    │                          #   SettingsModal, OAuthDashboard, LoginScreen,
-    │                          #   LoadingScreen, ErrorNotification
-    ├── services/discordApi.ts # REST client + Gateway WebSocket
-    ├── store/                 # Zustand state
-    ├── utils/
-    │   ├── markdown.ts        # Shared, XSS-safe Discord markdown renderer
-    │   ├── messageFormat.ts   # Shared timestamp/grouping helpers
-    │   ├── ripple.ts          # Delegated Material ripple feedback
-    │   └── cn.ts
-    └── index.css              # Material 3 design system + markup styles
+.                              # repository root — the build context for both hosts
+├── Dockerfile                 # ONE multi-stage image, used by Render and Railway
+├── .dockerignore              # Keeps host node_modules/ and dist/ out of the context
+├── render.yaml                # Render Blueprint (runtime: docker -> ./Dockerfile)
+├── .gitignore
+├── .github/
+│   └── workflows/ci.yml       # Frontend, backend, and a Docker image smoke test
+└── discord-clone-src/         # the application
+    ├── run.py                 # Flask/Gunicorn entrypoint (fast startup, API proxy, OAuth2)
+    ├── build_frontend.py      # Frontend install/build/check worker
+    ├── requirements.txt       # Runtime Python dependencies
+    ├── requirements-dev.txt   # Adds pytest
+    ├── package.json           # Frontend dependencies and scripts
+    ├── vite.config.ts         # Vite build config + dev-server API proxy
+    ├── vitest.config.ts       # Unit test config (separate from the app build)
+    ├── pytest.ini             # Backend test config
+    ├── index.html
+    ├── scripts/
+    │   └── audit-check.mjs    # Dependency audit gate with a justified allowlist
+    ├── tests/
+    │   ├── markdown.test.ts   # Renderer output + XSS resistance
+    │   ├── messageFormat.test.ts  # Grouping/timestamp rules
+    │   ├── discordApi.test.ts # Validation limits, CDN URLs, presence helpers
+    │   ├── conftest.py        # Flask test fixtures
+    │   └── test_run.py        # Routing, proxy, OAuth2 and hosting-platform tests
+    ├── dist/                  # Production build (gitignored, served by Flask)
+    └── src/
+        ├── components/        # React UI components (Material 3)
+        │   ├── Composer.tsx   # Message input, shared by the guild and DM views
+        │   ├── GithubMark.tsx # GitHub logo (lucide-react dropped brand icons)
+        │   └── …              # ServerList, ChannelList, DMList, MessageArea,
+        │                      #   DMMessageArea, MemberList, UserPanel,
+        │                      #   SettingsModal, OAuthDashboard, LoginScreen,
+        │                      #   LoadingScreen, ErrorNotification
+        ├── services/discordApi.ts  # REST client + Gateway WebSocket
+        ├── store/             # Zustand state
+        ├── utils/
+        │   ├── markdown.ts    # Shared, XSS-safe Discord markdown renderer
+        │   ├── messageFormat.ts  # Shared timestamp/grouping helpers
+        │   ├── ripple.ts      # Delegated Material ripple feedback
+        │   └── cn.ts
+        └── index.css          # Material 3 design system + markup styles
 ```
+
+Deployment config sits at the repository root because that is where both hosts
+look for it: Render discovers a Blueprint's `render.yaml` at the root by default,
+and Railway builds with a `Dockerfile` it finds at the root. `render.yaml` used
+to live in `discord-clone-src/`, which Render only finds if you set a custom
+Blueprint Path by hand.
 
 ---
 
@@ -226,11 +240,28 @@ Discord's authorization-code grant is the standard flow: the user is redirected 
 DISCORD_CLIENT_ID=your_client_id
 DISCORD_CLIENT_SECRET=your_client_secret
 DISCORD_OAUTH_SCOPES=identify email guilds
-PUBLIC_BASE_URL=https://YOUR-RENDER-APP.onrender.com
 SECRET_KEY=<python -c "import secrets; print(secrets.token_urlsafe(48))">
+# Only needed for a custom domain, a preview environment, or a host that
+# injects nothing. On Render and Railway this is derived automatically.
+PUBLIC_BASE_URL=
 ```
 
-**`PUBLIC_BASE_URL` is required.** Without it the server has no trusted source for an absolute URL and OAuth login fails closed with a 503 telling you exactly what to set. (Alternatively set `DISCORD_REDIRECT_URI` explicitly, or list your hostname in `TRUSTED_HOSTS`.)
+**`PUBLIC_BASE_URL` is optional on Render and Railway.** When it is unset the
+server derives its public URL from the host's own injected variable —
+`RENDER_EXTERNAL_URL` on Render, `RAILWAY_PUBLIC_DOMAIN` on Railway (a bare
+host, so an `https://` scheme is added). Those are set by the platform and
+cannot be overridden by a request, so deriving from them does not weaken the
+rule that absolute URLs are never built from request headers.
+
+Set `PUBLIC_BASE_URL` explicitly when you attach a **custom domain**, or when the
+injected value differs from the address users actually reach you on. `/healthz`
+reports `platform`, `publicBaseUrl` and `publicBaseUrlSource` so you can see
+exactly what was resolved and why.
+
+On a host that injects nothing, OAuth still **fails closed** with a 503 naming
+the platform and the fix, rather than guessing from `X-Forwarded-Host`.
+(Alternatively set `DISCORD_REDIRECT_URI` explicitly, or list your hostname in
+`TRUSTED_HOSTS`.)
 
 ### 3. Flow
 
@@ -495,43 +526,135 @@ See `.env.example` for the annotated list. Summary:
 | `DISCORD_USER_AGENT` | `DiscordBot (…)` | Bot-style UA for the proxy. Do not use a browser UA. |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | unset | OAuth2 application credentials. |
 | `DISCORD_OAUTH_SCOPES` | `identify email guilds` | Requested scopes. |
-| `PUBLIC_BASE_URL` | unset | **Required for OAuth2.** Public site URL used to build the redirect URI. |
+| `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL`, else `https://$RAILWAY_PUBLIC_DOMAIN` | Public site URL used to build the redirect URI. Set it explicitly for a custom domain. |
 | `DISCORD_REDIRECT_URI` | unset | Explicit callback URL, overrides `PUBLIC_BASE_URL`. |
 | `TRUSTED_HOSTS` | *(empty)* | Comma-separated hostnames whose `X-Forwarded-Host` may be used when `PUBLIC_BASE_URL` is unset. |
 | `OAUTH_STATE_MAX_AGE` | `600` | CSRF state cookie lifetime, seconds. |
 | `OAUTH_HANDOFF_MAX_AGE` | `120` | One-time token handoff cookie lifetime, seconds. |
+| `WEB_CONCURRENCY` | `2` | Gunicorn workers in the Docker image. Safe above 1 because `run.py` resolves one shared `SECRET_KEY` across workers. |
+| `RENDER_EXTERNAL_URL` | *injected by Render* | Read-only. Full public URL of a web service; becomes `PUBLIC_BASE_URL` when that is unset. |
+| `RAILWAY_PUBLIC_DOMAIN` | *injected by Railway* | Read-only. Bare public host such as `app.up.railway.app`; populated once you generate a domain. |
 | `APP_NAME` | `Disclone` | Display name in the UI and at the front of the default status text. |
 | `APP_VERSION` | `1.3.0` | Shown on the About page. |
 | `APP_GITHUB_URL` | this repository | Repository to promote. Must be http(s) with no userinfo. |
-| `APP_SITE_URL` | `PUBLIC_BASE_URL`, else this Render service | The live deployment. |
+| `APP_SITE_URL` | `PUBLIC_BASE_URL`, so it follows the host | The live deployment. |
 | `APP_PRESENCE_TEXT` | *(empty)* | Pins the exact status text and makes it read-only in-app. Empty composes `Name · repo · site`. |
 
 ---
 
-## Deploy on Render
+## Deploy on Render or Railway
 
-### Option A — Blueprint
+Both hosts build **the same `Dockerfile`** at the repository root. That is the
+recommended path for each, and it means the two deployments cannot drift apart.
 
-Push the repository and choose **New +** → **Blueprint**. Render reads `render.yaml`. Then set `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` and `PUBLIC_BASE_URL` in the dashboard (they are marked `sync: false`).
+```text
+stage 1  node:22-slim      npm ci --include=dev  ->  vite build  ->  dist/index.html
+stage 2  python:3.13-slim  pip install -r requirements.txt  +  dist/  ->  gunicorn
+```
 
-### Option B — Manual Web Service
+Node never reaches the runtime image, and the `nodeenv` fallback (which
+downloads a Node tarball at build time) is not on the critical path. The image
+runs **unprivileged**, with `AUTO_BUILD_FRONTEND=0`, `BACKGROUND_BUILD=0` and
+`RUN_STARTUP_CHECKS=0` because `dist/` is already baked in.
 
+The start command is:
+
+```bash
+gunicorn run:app --bind 0.0.0.0:${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} \
+  --threads 4 --worker-class gthread --worker-tmp-dir /dev/shm --timeout 120
+```
+
+Shell form, so the host-injected `PORT` always wins. `--timeout` stays well
+clear of the 30 s the Discord proxy allows upstream.
+
+### Render — Option A: Blueprint (recommended)
+
+Push the repository, then **New +** → **Blueprint**. Render finds `render.yaml`
+at the repository root with no custom path needed. Set `DISCORD_CLIENT_ID` and
+`DISCORD_CLIENT_SECRET` in the dashboard (they are `sync: false`); everything
+else has a working default, including `PUBLIC_BASE_URL`, which is left empty so
+it derives from `RENDER_EXTERNAL_URL`.
+
+### Render — Option B: manual Docker service
+
+* **Runtime:** Docker
+* **Dockerfile Path:** `./Dockerfile`
+* **Health Check Path:** `/healthz`
+* **Environment:** `SECRET_KEY`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`
+
+### Render — Option C: native Python (no Docker)
+
+Still supported, for a service created before the Dockerfile existed.
+
+* **Root Directory:** `discord-clone-src`
 * **Environment:** Python
-* **Build Command:**
-
-  ```bash
-  pip install -r requirements.txt && python build_frontend.py --build-only
-  ```
-
-* **Start Command:**
-
-  ```bash
-  gunicorn run:app --bind 0.0.0.0:$PORT
-  ```
-
+* **Build Command:** `pip install -r requirements.txt && python build_frontend.py --build-only`
+* **Start Command:** `gunicorn run:app --bind 0.0.0.0:$PORT`
 * **Health Check Path:** `/healthz`
 
-`build_frontend.py --build-only` uses system npm when available, otherwise installs a local Node runtime via `nodeenv`. Because the heavy build runs in Render's **build** phase, the start command only imports `run:app` and binds Gunicorn quickly. The background rebuild remains as a safety net if `dist/` is ever missing at runtime.
+`build_frontend.py --build-only` uses system npm when available, otherwise
+installs a local Node runtime via `nodeenv`. Because the heavy build runs in
+Render's **build** phase, the start command only imports `run:app` and binds
+Gunicorn quickly. The background rebuild remains as a safety net if `dist/` is
+ever missing at runtime. Set `WEB_CONCURRENCY=1` on this route if you leave
+`SECRET_KEY` unset, or set `SECRET_KEY` explicitly.
+
+### Railway
+
+1. **New Project** → **Deploy from GitHub repo**. Railway finds the root
+   `Dockerfile` and builds with it automatically.
+2. **Settings → Networking → Public Networking → Generate Domain.** This is the
+   step that populates `RAILWAY_PUBLIC_DOMAIN`, which the app turns into its
+   public URL. Without a domain the app cannot know its own address, so OAuth2
+   fails closed and `/healthz` says so.
+3. Set `SECRET_KEY`, `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` as
+   variables. Leave `PUBLIC_BASE_URL` unset unless you attach a custom domain.
+4. **Settings → Deploy → Healthcheck Path:** `/healthz`.
+
+> **Why there is no `railway.json`.** Railway's Config-as-Code files
+> (`railway.json` / `railway.toml`) are deprecated, **stop being read on
+> 2026-12-01**, and *new services cannot opt into them at all*. Its replacement,
+> Infrastructure as Code at `.railway/railway.ts`, is **never read at deploy
+> time** — it only reaches a service when someone runs `railway config apply`
+> with the CLI. Committing either file would therefore be decoration that
+> silently rots. The `Dockerfile` is the durable answer: Railway always builds
+> with one when it is present, and it carries the start command, healthcheck and
+> environment defaults itself. Steps 2 and 4 above are the only dashboard
+> settings that cannot be expressed in the image.
+
+### Local Docker
+
+```bash
+docker build -t disclone .
+docker run --rm -p 8000:8000 -e SECRET_KEY=dev-only disclone
+# http://localhost:8000
+```
+
+### After deploying on either host
+
+Add the callback URL to your Discord application under **OAuth2 → Redirects**:
+
+```text
+https://<your-host>/auth/discord/callback
+```
+
+`GET /healthz` confirms what was resolved:
+
+```json
+{
+  "status": "ok",
+  "frontendBuilt": true,
+  "oauthConfigured": true,
+  "platform": "railway",
+  "publicBaseUrl": "https://disclone-production.up.railway.app",
+  "publicBaseUrlSource": "railway-injected"
+}
+```
+
+CI builds this image on every push and smoke-tests it — including starting a
+second container with `RAILWAY_PUBLIC_DOMAIN` and a third with
+`RENDER_EXTERNAL_URL` to prove the derivation works in the real image, not just
+under pytest.
 
 ---
 
@@ -555,12 +678,12 @@ All other advisories found during the last review (postcss, browserslist, esbuil
 
 ```bash
 npm test                     # 128 unit tests (Vitest)
-python -m pytest tests -v    # 94 backend tests (pytest + Flask test client)
+python -m pytest tests -v    # 120 backend tests (pytest + Flask test client)
 ```
 
 Frontend coverage: markdown rendering for every supported construct, the full XSS payload battery with structural assertions, code-block protection, mention/role/channel/emoji/timestamp resolution, streamer-mode masking, sentinel forgery, message grouping rules, timestamp formatting, upload and length validation, gateway intent bits, CDN URL construction, custom-status activity construction and truncation, presence payload shape, the attribution opt-out, and `/api/app-info` fetching including the HTML-instead-of-JSON misconfiguration.
 
-Backend coverage: health and SPA serving, path traversal, trusted-host handling and host-header injection, OAuth state/CSRF validation, error-parameter sanitisation, the signed handoff cookie (issue, exchange, tamper, forge, expire, path scoping), token revocation, proxy endpoint guarding, header forwarding, error-detail leakage, CORS policy, upload limits, security headers, and `/api/app-info` (shape, environment overrides, presence-text composition and truncation, and rejection of `javascript:`/`data:`/userinfo URLs that would otherwise become live `href`s).
+Backend coverage: health and SPA serving, path traversal, trusted-host handling and host-header injection, OAuth state/CSRF validation, error-parameter sanitisation, the signed handoff cookie (issue, exchange, tamper, forge, expire, path scoping), token revocation, proxy endpoint guarding, header forwarding, error-detail leakage, CORS policy, upload limits, security headers, and `/api/app-info` (shape, environment overrides, presence-text composition and truncation, rejection of `javascript:`/`data:`/userinfo URLs that would otherwise become live `href`s, hosting-platform detection for Render/Railway/Fly/Heroku, public-URL derivation and its precedence against an explicit `PUBLIC_BASE_URL`, fail-closed behaviour when a host injects nothing, and `SECRET_KEY` resolution across concurrent Gunicorn workers including the read-only-filesystem fallback.)
 
 ---
 
@@ -570,4 +693,8 @@ Backend coverage: health and SPA serving, path traversal, trusted-host handling 
 * `vite-plugin-singlefile` is enabled, so the production build is a single self-contained `dist/index.html` (~483 kB, ~132 kB gzipped).
 * Some Discord features require privileged bot intents and correct server permissions.
 * Never hard-code a bot token in source or environment variables.
+* **`SECRET_KEY` should always be set explicitly in production.** Both Render and Railway have ephemeral filesystems, so the generated key file does not survive a redeploy and an in-flight OAuth login can be invalidated. `render.yaml` sets `generateValue: true`; on Railway, generate one yourself and add it as a variable.
+* The Docker image runs unprivileged. `run.py` writes its fallback `SECRET_KEY` to `/tmp`, which every worker in one container shares, so a read-only root filesystem still gives all workers the *same* key rather than one each.
+* Railway services are not publicly reachable until you click **Generate Domain**. Until then `RAILWAY_PUBLIC_DOMAIN` is empty, so OAuth2 fails closed by design — that is the platform having no address to redirect to, not a bug.
+* `railway.json` is deliberately absent. See [Railway](#railway) for why committing one would rot.
 * The repository previously contained a committed Python virtualenv under `.local/` (211 files, 2.2 MB) that could not even import Flask. It has been removed from tracking and root `.gitignore` now prevents a recurrence.
