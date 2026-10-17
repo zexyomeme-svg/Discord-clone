@@ -1,43 +1,26 @@
-import { useRef, useEffect, useCallback, useState, memo } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react';
 import { Search, PlusCircle, Smile, Loader2, AtSign, FileText, Reply, MoreHorizontal, X } from 'lucide-react';
 import { Smile as EmojiIcon } from 'lucide-react';
 import useStore from '../store/useStore';
 import { addReaction, getUserAvatarUrl } from '../services/discordApi';
 import type { Message, Channel } from '../store/types';
-import { format, isToday, isYesterday, isSameDay } from 'date-fns';
-
-function fmtTs(ts: string) { const d = new Date(ts); if (isToday(d)) return `Today at ${format(d, 'h:mm a')}`; if (isYesterday(d)) return `Yesterday at ${format(d, 'h:mm a')}`; return format(d, 'MM/dd/yyyy h:mm a'); }
-function fmtShort(ts: string) { return format(new Date(ts), 'h:mm a'); }
-function shouldGroup(p: Message, c: Message) { return p.author.id === c.author.id && (new Date(c.timestamp).getTime() - new Date(p.timestamp).getTime()) < 420000; }
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderMd(content: string) {
-  let r = escapeHtml(content);
-  r = r.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-  r = r.replace(/`([^`]+)`/g, '<code>$1</code>');
-  r = r.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  r = r.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
-  r = r.replace(/__(.+?)__/g, '<u>$1</u>');
-  r = r.replace(/~~(.+?)~~/g, '<del>$1</del>');
-  r = r.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
-  r = r.replace(/\n/g, '<br>');
-  return r;
-}
+import { isSameDay } from 'date-fns';
+// Shared with MessageArea. This file previously had its own copy that was
+// missing mention, emoji, channel-link and blockquote support entirely, so DMs
+// rendered noticeably less markup than guild channels.
+import { renderMarkdown, type MarkdownContext } from '../utils/markdown';
+import {
+  formatDateDivider,
+  formatMessageTimestamp,
+  formatShortTimestamp,
+  shouldGroupMessages,
+} from '../utils/messageFormat';
 
 function DateDivider({ date }: { date: Date }) {
-  let l = format(date, 'MMMM d, yyyy'); if (isToday(date)) l = 'Today'; else if (isYesterday(date)) l = 'Yesterday';
-  return <div className="flex items-center my-6 mx-4"><div className="flex-1 h-px bg-discord-border/50" /><span className="px-2 text-[11px] text-discord-text-muted font-bold uppercase">{l}</span><div className="flex-1 h-px bg-discord-border/50" /></div>;
+  return <div className="flex items-center my-6 mx-4"><div className="flex-1 h-px bg-discord-border/50" /><span className="px-2 text-[11px] text-discord-text-muted font-bold uppercase">{formatDateDivider(date)}</span><div className="flex-1 h-px bg-discord-border/50" /></div>;
 }
 
-const MsgRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }: { message: Message; isGrouped: boolean; fontSize: number; spacing: number; compactMode: boolean }) => {
+const MsgRow = memo(({ message, isGrouped, fontSize, spacing, compactMode, mdContext }: { message: Message; isGrouped: boolean; fontSize: number; spacing: number; compactMode: boolean; mdContext: MarkdownContext }) => {
   const { token, authMode, setError, userSettings } = useStore();
   const av = getUserAvatarUrl(message.author.id, message.author.avatar, message.author.discriminator);
   const authorName = userSettings.streamerMode ? 'Hidden User' : (message.author.global_name || message.author.username);
@@ -50,7 +33,7 @@ const MsgRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }: { m
       </div>
       {isGrouped ? (
         <div className="w-[40px] mr-4 flex-shrink-0 flex items-center justify-end">
-          <span className="text-[11px] text-discord-text-muted opacity-0 group-hover:opacity-100 transition-opacity select-none">{fmtShort(message.timestamp)}</span>
+          <span className="text-[11px] text-discord-text-muted opacity-0 group-hover:opacity-100 transition-opacity select-none">{formatShortTimestamp(message.timestamp)}</span>
         </div>
       ) : (
         <img src={av} alt="" className="w-10 h-10 rounded-full flex-shrink-0 cursor-pointer mr-4 mt-0.5"
@@ -61,10 +44,10 @@ const MsgRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }: { m
           <div className="flex items-baseline gap-1 leading-[22px]">
             <span className="font-medium text-white hover:underline cursor-pointer">{authorName}</span>
             {message.author.bot && <span className="bg-discord-blurple text-white text-[10px] font-medium px-[5px] py-[1px] rounded uppercase ml-0.5">Bot</span>}
-            <span className="text-xs text-discord-text-muted ml-1">{fmtTs(message.timestamp)}</span>
+            <span className="text-xs text-discord-text-muted ml-1">{formatMessageTimestamp(message.timestamp)}</span>
           </div>
         )}
-        {message.content && <div className="msg-content leading-[1.375rem] break-words" style={{ fontSize: `${fontSize}px` }} dangerouslySetInnerHTML={{ __html: renderMd(message.content) }} />}
+        {message.content && <div className="msg-content leading-[1.375rem] break-words" style={{ fontSize: `${fontSize}px` }} dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content, mdContext) }} />}
         {message.attachments.length > 0 && <div className="mt-1 space-y-1">{message.attachments.map(att => {
           if (att.content_type?.startsWith('image/')) return <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer"><img src={att.proxy_url || att.url} alt="" className="rounded-lg max-w-[400px] max-h-[300px]" /></a>;
           return <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 bg-discord-sidebar rounded-lg p-3 hover:bg-discord-hover max-w-[400px] border border-discord-border/50"><FileText size={24} className="text-discord-text-muted" /><div><p className="text-discord-text-link text-sm hover:underline">{att.filename}</p><p className="text-xs text-discord-text-muted">{(att.size/1024).toFixed(1)} KB</p></div></a>;
@@ -95,7 +78,7 @@ function DMWelcome({ channel }: { channel: Channel }) {
 }
 
 export default function DMMessageArea() {
-  const { selectedChannelId, dmChannels, messages, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, userSettings } = useStore();
+  const { selectedChannelId, dmChannels, messages, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, userSettings, user } = useStore();
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -115,6 +98,18 @@ export default function DMMessageArea() {
     )
     : msgs;
   const ch = dmChannels.find(c => c.id === selectedChannelId);
+  // DM participants become the mention-resolution context so <@id> in a DM
+  // renders a real name instead of "Unknown User".
+  const mdContext = useMemo<MarkdownContext>(() => {
+    const recipients = ch?.recipients || [];
+    const participants = user ? [...recipients, user] : recipients;
+    return {
+      mentions: participants,
+      members: participants.map((p) => ({ user: p, nick: null })),
+      currentUserId: user?.id ?? null,
+      streamerMode: userSettings.streamerMode,
+    };
+  }, [ch, user, userSettings.streamerMode]);
   const r = ch?.recipients?.[0];
   const rName = r?.global_name || r?.username || 'Unknown';
   const isSending = selectedChannelId ? Boolean(isSendingMessages[selectedChannelId]) : false;
@@ -161,9 +156,9 @@ export default function DMMessageArea() {
             {normalizedSearch && <div className="px-4 py-2 text-xs text-discord-text-muted">Showing {shownMessages.length} result{shownMessages.length === 1 ? '' : 's'} for “{searchQuery}”.</div>}
             {shownMessages.map((msg, i) => {
               const prev = i > 0 ? shownMessages[i-1] : null;
-              const grouped = prev ? shouldGroup(prev, msg) : false;
+              const grouped = prev ? shouldGroupMessages(prev, msg) : false;
               const dd = !prev || !isSameDay(new Date(prev.timestamp), new Date(msg.timestamp));
-              return <div key={msg.id}>{dd && <DateDivider date={new Date(msg.timestamp)} />}<MsgRow message={msg} isGrouped={grouped && !dd} fontSize={userSettings.fontSize} spacing={userSettings.messageGroupSpacing} compactMode={userSettings.compactMode} /></div>;
+              return <div key={msg.id}>{dd && <DateDivider date={new Date(msg.timestamp)} />}<MsgRow message={msg} isGrouped={grouped && !dd} fontSize={userSettings.fontSize} spacing={userSettings.messageGroupSpacing} compactMode={userSettings.compactMode} mdContext={mdContext} /></div>;
             })}
             <div ref={endRef} className="h-[30px]" />
           </>

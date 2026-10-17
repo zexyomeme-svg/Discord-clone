@@ -13,7 +13,7 @@ import UserPanel from './components/UserPanel';
 import SettingsModal from './components/SettingsModal';
 import ErrorNotification from './components/ErrorNotification';
 import OAuthDashboard from './components/OAuthDashboard';
-import { getGuildIconUrl, getUserAvatarUrl } from './services/discordApi';
+import { exchangeOAuthHandoff, getGuildIconUrl, getUserAvatarUrl } from './services/discordApi';
 import type { Channel, GuildMember, Role } from './store/types';
 
 function MainLayout() {
@@ -225,14 +225,6 @@ function MobileLayout() {
   );
 }
 
-function decodeOAuthRedirectToken(value: string) {
-  try {
-    return atob(value.replace(/-/g, '+').replace(/_/g, '/'));
-  } catch {
-    return value;
-  }
-}
-
 export default function App() {
   const { token, authMode, user, isLoading, login, loginWithOAuth, userSettings, updateSettings, unreadCounts, settingsOpen, closeSettings } = useStore();
 
@@ -245,8 +237,10 @@ export default function App() {
     root.classList.toggle('streamer-mode', userSettings.streamerMode);
     root.classList.toggle('compact-mode', userSettings.compactMode);
     root.style.setProperty('--app-saturation', `${userSettings.saturation}%`);
+    // Only engage the saturate filter when it is not a no-op. See index.css for
+    // why this lives on <html> and not <body>.
+    root.classList.toggle('app-saturated', userSettings.saturation !== 100);
     root.lang = userSettings.language;
-    document.body.style.filter = `saturate(${userSettings.saturation}%)`;
   }, [userSettings]);
 
   useEffect(() => {
@@ -287,32 +281,46 @@ export default function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const oauthToken = params.get('oauth_token');
+    const oauthPending = params.get('oauth_pending');
     const oauthError = params.get('oauth_error');
 
-    if (oauthToken) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-      loginWithOAuth(decodeOAuthRedirectToken(oauthToken)).catch(() => {
-        localStorage.removeItem('discord_oauth_access_token');
-        localStorage.removeItem('discord_auth_mode');
-        useStore.setState({ token: null, authMode: 'bot' });
-      });
+    const clearQuery = () => window.history.replaceState({}, document.title, window.location.pathname);
+
+    const clearStoredSession = () => {
+      localStorage.removeItem('discord_token');
+      localStorage.removeItem('discord_oauth_access_token');
+      localStorage.removeItem('discord_auth_mode');
+      useStore.setState({ token: null, authMode: 'bot', isLoading: false });
+    };
+
+    // The OAuth2 access token arrives in a signed, short-lived HttpOnly cookie
+    // rather than the query string, so it never lands in server logs, browser
+    // history or Referer headers. Collect it exactly once.
+    if (oauthPending) {
+      clearQuery();
+      void exchangeOAuthHandoff()
+        .then((accessToken) => {
+          if (!accessToken) throw new Error('The Discord sign-in expired. Please try again.');
+          return loginWithOAuth(accessToken);
+        })
+        .catch((err: Error) => {
+          clearStoredSession();
+          useStore.setState({ error: err?.message || 'Discord OAuth2 sign-in failed.' });
+        });
       return;
     }
 
     if (oauthError) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-      useStore.setState({ error: `Discord OAuth2 failed: ${oauthError}` });
+      clearQuery();
+      const reason = oauthError.replace(/[_-]/g, ' ');
+      useStore.setState({ error: `Discord OAuth2 failed: ${reason}` });
       return;
     }
 
     if (token && !user && !isLoading) {
       const restore = authMode === 'oauth' ? loginWithOAuth : login;
-      restore(token).catch(() => {
-        localStorage.removeItem('discord_token');
-        localStorage.removeItem('discord_oauth_access_token');
-        localStorage.removeItem('discord_auth_mode');
-        useStore.setState({ token: null, authMode: 'bot' });
+      void restore(token).catch(() => {
+        clearStoredSession();
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

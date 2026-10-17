@@ -3,3 +3,7 @@ flask-cors==6.0.2
 gunicorn==23.0.0
 requests==2.32.5
 nodeenv==1.10.0
+# Imported directly by run.py to sign the one-time OAuth2 handoff cookie.
+# Flask already depends on it, but it is pinned explicitly because it is part of
+# this app's own API surface rather than an incidental transitive dependency.
+itsdangerous==2.2.0

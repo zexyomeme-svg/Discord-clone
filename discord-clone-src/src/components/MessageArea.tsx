@@ -1,74 +1,44 @@
-import { useRef, useEffect, useCallback, useState, memo } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react';
 import { Hash, Users, Search, PlusCircle, Smile, Loader2, FileText, Smile as EmojiIcon, Reply, MoreHorizontal, X } from 'lucide-react';
 import useStore from '../store/useStore';
 import { addReaction, getUserAvatarUrl } from '../services/discordApi';
 import type { Message, Channel } from '../store/types';
-import { format, isToday, isYesterday, isSameDay } from 'date-fns';
-
-function fmtTs(ts: string) {
-  const d = new Date(ts);
-  if (isToday(d)) return `Today at ${format(d, 'h:mm a')}`;
-  if (isYesterday(d)) return `Yesterday at ${format(d, 'h:mm a')}`;
-  return format(d, 'MM/dd/yyyy h:mm a');
-}
-
-function fmtShort(ts: string) { return format(new Date(ts), 'h:mm a'); }
-
-function shouldGroup(prev: Message, curr: Message) {
-  return prev.author.id === curr.author.id && (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) < 420000;
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderMd(content: string) {
-  let r = escapeHtml(content);
-  r = r.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-  r = r.replace(/`([^`]+)`/g, '<code>$1</code>');
-  r = r.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  r = r.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
-  r = r.replace(/__(.+?)__/g, '<u>$1</u>');
-  r = r.replace(/~~(.+?)~~/g, '<del>$1</del>');
-  r = r.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-  r = r.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
-  r = r.replace(/<@!?(\d+)>/g, '<span class="bg-discord-mention text-[#c9cdfb] px-0.5 rounded cursor-pointer hover:bg-[#5865f2] hover:text-white font-medium">@user</span>');
-  r = r.replace(/<@&(\d+)>/g, '<span class="bg-discord-mention text-[#c9cdfb] px-0.5 rounded">@role</span>');
-  r = r.replace(/<#(\d+)>/g, '<span class="bg-discord-mention text-[#c9cdfb] px-0.5 rounded cursor-pointer hover:bg-[#5865f2] hover:text-white">#channel</span>');
-  r = r.replace(/<a?:(\w+):(\d+)>/g, '<img src="https://cdn.discordapp.com/emojis/$2.png?size=24" alt=":$1:" class="inline-block w-5 h-5 align-middle" />');
-  r = r.replace(/\n/g, '<br>');
-  return r;
-}
+import { isSameDay } from 'date-fns';
+// Shared with DMMessageArea. The previous per-file copies had drifted: this one
+// had mention/emoji/blockquote rules that could never match (they looked for a
+// literal `<` after the content had already been escaped to `&lt;`), and the DM
+// copy was missing them entirely.
+import { renderMarkdown, type MarkdownContext } from '../utils/markdown';
+import {
+  formatDateDivider,
+  formatMessageTimestamp,
+  formatShortTimestamp,
+  isSystemMessage,
+  shouldGroupMessages,
+  systemMessageVerb,
+} from '../utils/messageFormat';
 
 function DateDivider({ date }: { date: Date }) {
-  let label = format(date, 'MMMM d, yyyy');
-  if (isToday(date)) label = 'Today';
-  else if (isYesterday(date)) label = 'Yesterday';
   return (
     <div className="flex items-center my-6 mx-4">
       <div className="flex-1 h-px bg-discord-border/50" />
-      <span className="px-2 text-[11px] text-discord-text-muted font-bold uppercase">{label}</span>
+      <span className="px-2 text-[11px] text-discord-text-muted font-bold uppercase">{formatDateDivider(date)}</span>
       <div className="flex-1 h-px bg-discord-border/50" />
     </div>
   );
 }
 
-const MessageRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }: { message: Message; isGrouped: boolean; fontSize: number; spacing: number; compactMode: boolean }) => {
+const MessageRow = memo(({ message, isGrouped, fontSize, spacing, compactMode, mdContext }: { message: Message; isGrouped: boolean; fontSize: number; spacing: number; compactMode: boolean; mdContext: MarkdownContext }) => {
   const { token, authMode, setError, userSettings } = useStore();
   const avatarUrl = getUserAvatarUrl(message.author.id, message.author.avatar, message.author.discriminator);
   const authorName = userSettings.streamerMode ? 'Hidden User' : (message.author.global_name || message.author.username);
-  const isSys = message.type !== 0 && message.type !== 19;
+  const isSys = isSystemMessage(message);
   if (isSys) {
     return (
       <div className="px-[72px] py-0.5 text-discord-text-muted text-sm flex items-center gap-1">
         <span className="mr-1">→</span>
-        <span><strong className="text-white font-medium">{authorName}</strong> {message.type === 7 ? 'joined the server.' : message.type === 8 ? 'just boosted the server!' : `triggered type ${message.type}`}</span>
-        <span className="text-xs ml-1">{fmtShort(message.timestamp)}</span>
+        <span><strong className="text-white font-medium">{authorName}</strong> {systemMessageVerb(message.type)}</span>
+        <span className="text-xs ml-1">{formatShortTimestamp(message.timestamp)}</span>
       </div>
     );
   }
@@ -84,7 +54,7 @@ const MessageRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }:
 
       {isGrouped ? (
         <div className="w-[40px] mr-4 flex-shrink-0 flex items-center justify-end">
-          <span className="text-[11px] text-discord-text-muted opacity-0 group-hover:opacity-100 transition-opacity select-none">{fmtShort(message.timestamp)}</span>
+          <span className="text-[11px] text-discord-text-muted opacity-0 group-hover:opacity-100 transition-opacity select-none">{formatShortTimestamp(message.timestamp)}</span>
         </div>
       ) : (
         <img src={avatarUrl} alt="" className="w-10 h-10 rounded-full flex-shrink-0 cursor-pointer hover:shadow-lg mr-4 mt-0.5"
@@ -96,7 +66,7 @@ const MessageRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }:
           <div className="flex items-baseline gap-1 leading-[22px]">
             <span className="font-medium text-white hover:underline cursor-pointer">{authorName}</span>
             {message.author.bot && <span className="bg-discord-blurple text-white text-[10px] font-medium px-[5px] py-[1px] rounded leading-[14px] uppercase ml-0.5 align-middle">Bot</span>}
-            <span className="text-xs text-discord-text-muted ml-1">{fmtTs(message.timestamp)}</span>
+            <span className="text-xs text-discord-text-muted ml-1">{formatMessageTimestamp(message.timestamp)}</span>
           </div>
         )}
 
@@ -112,7 +82,7 @@ const MessageRow = memo(({ message, isGrouped, fontSize, spacing, compactMode }:
 
         {message.content && (
           <div className="msg-content leading-[1.375rem] break-words" style={{ fontSize: `${fontSize}px` }}
-            dangerouslySetInnerHTML={{ __html: renderMd(message.content) }} />
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content, mdContext) }} />
         )}
 
         {message.attachments.length > 0 && (
@@ -181,7 +151,7 @@ function WelcomeMsg({ channel }: { channel?: Channel }) {
 }
 
 export default function MessageArea() {
-  const { selectedChannelId, selectedGuildId, channels, messages, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, toggleMemberList, showMemberList, typingUsers, userSettings } = useStore();
+  const { selectedChannelId, selectedGuildId, channels, messages, members, roles, user, isLoadingMessages, isLoadingMoreMessages, isSendingMessages, sendMessage: send, loadMoreMessages, toggleMemberList, showMemberList, typingUsers, userSettings } = useStore();
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -189,6 +159,20 @@ export default function MessageArea() {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  const guildCh = selectedGuildId ? channels[selectedGuildId] || [] : [];
+  const guildMembers = selectedGuildId ? members[selectedGuildId] || [] : [];
+  const guildRoles = selectedGuildId ? roles[selectedGuildId] || [] : [];
+
+  // Built once per guild/channel change so mention, role, channel and emoji
+  // markup can resolve to real names instead of generic placeholders.
+  const mdContext = useMemo<MarkdownContext>(() => ({
+    members: guildMembers,
+    roles: guildRoles,
+    channels: guildCh,
+    currentUserId: user?.id ?? null,
+    streamerMode: userSettings.streamerMode,
+  }), [guildMembers, guildRoles, guildCh, user?.id, userSettings.streamerMode]);
 
   const msgs = selectedChannelId ? messages[selectedChannelId] || [] : [];
   const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -200,7 +184,6 @@ export default function MessageArea() {
       || msg.attachments?.some((att) => att.filename.toLowerCase().includes(normalizedSearch))
     )
     : msgs;
-  const guildCh = selectedGuildId ? channels[selectedGuildId] || [] : [];
   const ch = guildCh.find(c => c.id === selectedChannelId);
   const isSending = selectedChannelId ? Boolean(isSendingMessages[selectedChannelId]) : false;
   const typing = (selectedChannelId ? typingUsers[selectedChannelId] || [] : []).filter(t => Date.now() - t.timestamp < 10000);
@@ -264,12 +247,12 @@ export default function MessageArea() {
             {normalizedSearch && <div className="px-4 py-2 text-xs text-discord-text-muted">Showing {shownMessages.length} result{shownMessages.length === 1 ? '' : 's'} for “{searchQuery}”.</div>}
             {shownMessages.map((msg, i) => {
               const prev = i > 0 ? shownMessages[i - 1] : null;
-              const grouped = prev ? shouldGroup(prev, msg) : false;
+              const grouped = prev ? shouldGroupMessages(prev, msg) : false;
               const dateDivider = !prev || !isSameDay(new Date(prev.timestamp), new Date(msg.timestamp));
               return (
                 <div key={msg.id}>
                   {dateDivider && <DateDivider date={new Date(msg.timestamp)} />}
-                  <MessageRow message={msg} isGrouped={grouped && !dateDivider} fontSize={userSettings.fontSize} spacing={userSettings.messageGroupSpacing} compactMode={userSettings.compactMode} />
+                  <MessageRow message={msg} isGrouped={grouped && !dateDivider} fontSize={userSettings.fontSize} spacing={userSettings.messageGroupSpacing} compactMode={userSettings.compactMode} mdContext={mdContext} />
                 </div>
               );
             })}

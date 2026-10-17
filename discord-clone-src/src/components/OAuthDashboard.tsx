@@ -26,7 +26,7 @@ export default function OAuthDashboard() {
                 </div>
                 <p className="text-discord-text-muted text-sm">@{user.username} • ID {user.id}</p>
               </div>
-              <button onClick={logout} className="flex items-center justify-center gap-2 px-4 py-2 rounded bg-discord-red hover:bg-red-600 text-white font-medium transition-colors">
+              <button onClick={() => void logout()} className="flex items-center justify-center gap-2 px-4 py-2 rounded bg-discord-red hover:bg-red-600 text-white font-medium transition-colors">
                 <LogOut size={18} /> Log out
               </button>
             </div>

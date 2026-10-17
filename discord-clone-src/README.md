@@ -1,61 +1,108 @@
 # Discord Clone — Render Ready
 
-A Discord-style web client built with React, Vite, Tailwind CSS, Zustand, and a small Flask server for production hosting on Render. The app uses a Discord **bot token** entered in the login form and stores it only in the browser's local storage. Personal account/user tokens are intentionally not supported.
+A Discord-style web client built with React 19, Vite 7, Tailwind CSS 4, and Zustand, served in production by a small Flask app.
 
-Startup is optimized for speed: **`run.py` never blocks on npm install or Vite builds**. Frontend install/build/check work lives in **`build_frontend.py`**, which `run.py` can launch in the background so the website becomes reachable immediately.
+The client authenticates with a Discord **bot token** entered in the login form, or with official **Discord OAuth2** sign-in. Personal account/user tokens are intentionally not supported.
 
-> **Important:** This project is intended for official bot-token based testing/development. Keep tokens private, never commit secrets, and follow Discord's Developer Terms and API rules.
+Startup is optimised for speed: **`run.py` never blocks on `npm install` or a Vite build**. That work lives in **`build_frontend.py`**, which `run.py` can launch in the background so the site becomes reachable immediately.
 
-## What was optimized for Render
+> **Important:** This project is intended for official bot-token based testing and development. Keep tokens private, never commit secrets, and follow Discord's Developer Terms and API rules.
 
-- Added `run.py`, a Flask entrypoint that:
-  - starts the web server immediately (no blocking frontend build on import),
-  - launches `build_frontend.py` in the **background** when `dist/index.html` is missing (or for light file/tool checks),
-  - serves the Vite production build from `dist/`,
-  - provides a `/healthz` health check with frontend build status,
-  - provides a same-origin `/api/discord/*` proxy to avoid browser CORS issues for Discord REST API calls.
-- Added `build_frontend.py`, the dedicated frontend build / project-check tool:
-  - finds npm, or installs a local Node.js runtime with `nodeenv` if npm is unavailable,
-  - runs `npm ci --include=dev` / `npm install --include=dev` and `npm run build`,
-  - writes `.frontend_build_status.json` for `/healthz`,
-  - supports `--build-only`, `--force`, `--check`, and `--background`.
-- Added `requirements.txt` with Flask, Gunicorn, CORS, Requests, and `nodeenv` dependencies.
-- Added `render.yaml` with build and start commands.
-- Updated the frontend API service to use the local Flask proxy for same-origin REST requests and normalize bot tokens automatically.
-- Updated package metadata and build scripts.
-- Updated Vite to a patched version and verified TypeScript/build output.
-- Added `.gitignore` and `.env.example`.
+---
+
+## Quick start
+
+```bash
+cd discord-clone-src
+
+# Backend
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt                  # runtime deps + pytest
+
+# Frontend
+npm ci --include=dev
+
+# Build once, then run
+npm run build
+python run.py                                        # http://localhost:8000
+```
+
+### Development
+
+Run the backend and the Vite dev server together:
+
+```bash
+python run.py        # terminal 1 — Flask on :8000, provides the API proxy
+npm run dev          # terminal 2 — Vite on :5173, proxies /api, /auth, /healthz to :8000
+```
+
+Open the Vite URL. **The dev server proxies the API routes to Flask**, so login, channel loading and message sending all work in dev mode. Point the proxy somewhere else with `FLASK_BACKEND_URL`.
+
+> The proxy is required. Without it `/api/discord/*` falls through to Vite's SPA
+> fallback and returns `index.html` with HTTP 200, which the client cannot parse.
+> The API layer detects that case and raises an explanatory error instead of the
+> misleading "Invalid token" it used to report.
+
+### Verify everything
+
+```bash
+npm run verify        # typecheck + unit tests + production build
+python -m pytest tests -v
+npm run audit:review  # dependency audit against a documented allowlist
+python -m py_compile run.py build_frontend.py
+```
+
+CI runs all of the above on every push (`.github/workflows/ci.yml`).
+
+---
 
 ## Project structure
 
 ```text
 .
-├── run.py                  # Flask/Gunicorn entrypoint (fast startup)
-├── build_frontend.py       # Frontend install/build/check worker
-├── requirements.txt        # Python dependencies
-├── render.yaml             # Optional Render Blueprint config
-├── package.json            # Frontend dependencies and scripts
-├── vite.config.ts          # Vite build config
+├── run.py                     # Flask/Gunicorn entrypoint (fast startup, API proxy, OAuth2)
+├── build_frontend.py          # Frontend install/build/check worker
+├── requirements.txt           # Runtime Python dependencies
+├── requirements-dev.txt       # Adds pytest
+├── render.yaml                # Render Blueprint config
+├── package.json               # Frontend dependencies and scripts
+├── vite.config.ts             # Vite build config + dev-server API proxy
+├── vitest.config.ts           # Unit test config (separate from the app build)
+├── pytest.ini                 # Backend test config
 ├── index.html
-├── dist/                   # Production Vite build (served by Flask)
+├── scripts/
+│   └── audit-check.mjs        # Dependency audit gate with a justified allowlist
+├── tests/
+│   ├── markdown.test.ts       # Renderer output + XSS resistance
+│   ├── messageFormat.test.ts  # Grouping/timestamp rules
+│   ├── discordApi.test.ts     # Validation limits + CDN URL helpers
+│   ├── conftest.py            # Flask test fixtures
+│   └── test_run.py            # Routing, proxy and OAuth2 security tests
+├── dist/                      # Production build (gitignored, served by Flask)
 └── src/
-    ├── components/         # React UI components
-    ├── services/           # Discord API client
-    ├── store/              # Zustand state
-    └── index.css           # Tailwind/theme styles
+    ├── components/            # React UI components
+    ├── services/discordApi.ts # REST client + Gateway WebSocket
+    ├── store/                 # Zustand state
+    ├── utils/
+    │   ├── markdown.ts        # Shared, XSS-safe Discord markdown renderer
+    │   ├── messageFormat.ts   # Shared timestamp/grouping helpers
+    │   └── cn.ts
+    └── index.css              # Tailwind theme + markup styles
 ```
 
-## How startup works (fast open)
+---
+
+## How startup works
 
 | Command | What it does |
 | --- | --- |
-| `python run.py` | Starts Flask **immediately**. If `dist/` is missing, spawns `build_frontend.py` in the background. Until the build finishes, `/` returns a temporary “Building frontend…” page that auto-refreshes. |
-| `gunicorn run:app` | Same non-blocking behavior on worker import. |
-| `python build_frontend.py --build-only` | Synchronous forced rebuild + project checks (used by Render’s build phase). |
-| `python run.py --build-only` | Thin wrapper that delegates to `build_frontend.py --build-only` for backwards compatibility. |
+| `python run.py` | Starts Flask **immediately**. If `dist/index.html` is missing, spawns `build_frontend.py` in the background. Until the build finishes, `/` returns a temporary "Building frontend…" page that auto-refreshes every 3s. |
+| `gunicorn run:app` | Same non-blocking behaviour on worker import. |
+| `python build_frontend.py --build-only` | Synchronous forced rebuild + project checks (Render's build phase). |
+| `python run.py --build-only` | Thin wrapper delegating to `build_frontend.py --build-only`. |
 | `python build_frontend.py --check` | Validates expected files/tools without forcing a rebuild. |
 
-Status is exposed at `/healthz`:
+`/healthz` reports:
 
 ```json
 {
@@ -63,278 +110,325 @@ Status is exposed at `/healthz`:
   "frontendBuilt": true,
   "buildStatus": "ready",
   "buildError": null,
-  "buildMessage": "...",
-  "backgroundBuild": true
+  "buildMessage": null,
+  "backgroundBuild": true,
+  "oauthConfigured": false
 }
 ```
 
-Background activity is logged to `.frontend_build.log` and summarized in `.frontend_build_status.json` (both are gitignored).
+Background activity is logged to `.frontend_build.log` and summarised in `.frontend_build_status.json` (both gitignored). A file lock prevents concurrent Gunicorn workers from stacking builds.
 
-## Local development
+Light startup checks are **off by default** (`RUN_STARTUP_CHECKS=0`) so a multi-worker boot does not spawn a subprocess per worker. They still run automatically when `dist/` is missing.
 
-### 1. Install dependencies
+---
 
-```bash
-npm install
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+## Security model
+
+### Token handling
+
+* **Bot token** — pasted into the login form, stored in `localStorage`, sent as `Authorization: Bot <token>`. Never committed, never read from the environment.
+* **OAuth2 access token** — never appears in a URL. `/auth/discord/callback` puts it in a **signed, short-lived (120s), `HttpOnly` cookie scoped to `/api/oauth/exchange`**, and the SPA collects it exactly once via `POST /api/oauth/exchange`. This keeps it out of access logs, browser history and `Referer` headers.
+* **Logout revokes.** In OAuth mode, logout calls Discord's `/oauth2/token/revoke` so the token stops working immediately rather than lingering until it expires.
+
+Because the bot token is readable by JavaScript in `localStorage`, the message renderer is treated as a hard security boundary — see below.
+
+### Message rendering
+
+Message content reaches the DOM through `dangerouslySetInnerHTML`, so `src/utils/markdown.ts` escapes **all** untrusted input first and only then applies Discord's markup rules to the escaped text. Guarantees:
+
+* Every replacer is a **function**, never a `$1` template string, so `$&`/`$1` sequences in user content cannot be re-expanded.
+* Code fences and inline code are lifted out into sentinel placeholders before any transform runs, so nothing inside code is rewritten. Sentinel characters are stripped from input first, so a placeholder cannot be forged.
+* Resolved names (usernames, nicknames, role names, channel names) come from Discord data and are **escaped again** at insertion time.
+* URLs are percent-encoded; only `http(s)` and the Discord CDN are ever emitted.
+
+This is covered by a structural test suite that asserts, for 20 hostile payloads, that **only** whitelisted tags and **only** whitelisted attributes per tag survive into the output, and that no URL-bearing attribute points anywhere unexpected.
+
+> Note on assertions: escaped payload text such as
+> `&lt;img src=x onerror=alert(1)&gt;` legitimately contains the characters
+> "onerror=". Grepping rendered output for that string produces false positives.
+> The tests therefore inspect live tag/attribute structure instead.
+
+### Backend hardening
+
+* **No wildcard CORS by default.** `CORS_ORIGINS` defaults to empty, meaning same-origin only — which is all this app needs. The previous `*` default made any deployment an open relay for Discord API traffic.
+* **Trusted hosts only.** Absolute URLs (OAuth redirect URIs) are built from `PUBLIC_BASE_URL`, or from `X-Forwarded-Host`/`Host` **only** when that hostname appears in `TRUSTED_HOSTS` (localhost is always trusted for local development). Otherwise OAuth fails closed with a 503 explaining what to set. An attacker-supplied `X-Forwarded-Host` can no longer dictate the redirect URI.
+* **No internal error leakage.** Proxy failures are logged server-side; the client receives a generic message. It previously received the full Python exception, including host, port and TLS internals.
+* **Proxy endpoint guard.** `_is_safe_endpoint()` rejects dot-segments, leading slashes, embedded schemes and userinfo tricks before the request is built.
+* **Upload cap.** `MAX_CONTENT_LENGTH` is set (default 32 MB) so the proxy cannot be made to buffer unbounded bodies.
+* **Security headers** on every response: `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`.
+* **Path traversal** is blocked by Werkzeug's `safe_join` inside `send_from_directory`; an explicit containment check backs it up. Traversal attempts fall through to the SPA shell.
+* **OAuth state** is CSRF-protected with `secrets.compare_digest` and a timestamp, and the `error` query parameter is sanitised against a strict pattern rather than reflected.
+
+### Bot User-Agent
+
+The proxy deliberately does **not** forward the browser's `User-Agent`. Discord/Cloudflare can reject Bot API calls that look like browser traffic with:
+
+```json
+{"message":"internal network error","code":40333}
 ```
 
-### 2. Run the React dev server
+A bot-style `DISCORD_USER_AGENT` is sent instead. If you still see 40333, your host's shared IP may be blocked — try a different host or a VPS with a static IP.
 
-```bash
-npm run dev
-```
+---
 
-Open the Vite URL printed in the terminal. For full API functionality without CORS errors, test the production server locally instead, because `python run.py` provides the `/api/discord/*` proxy used by the frontend.
+## Login and token format
 
-### 3. Start the full Python server locally (fast)
-
-```bash
-python run.py
-```
-
-`run.py` starts Flask right away on <http://localhost:8000>. If `dist/index.html` is missing, it starts `build_frontend.py` in the background so the server is not blocked by `npm install` / `npm run build`.
-
-Recommended production-like flow (build once, then start quickly):
-
-```bash
-python build_frontend.py --build-only
-python run.py
-```
-
-You can still build with npm directly:
-
-```bash
-npm run build
-python run.py
-```
-
-### 4. Manual checks / rebuild tools
-
-```bash
-# Project file + tool checks (and build only if dist is missing)
-python build_frontend.py --check
-
-# Force a clean rebuild
-python build_frontend.py --force
-
-# Render-style build gate
-python build_frontend.py --build-only
-```
-
-## Deploy on Render
-
-### Option A: Render Blueprint
-
-1. Push this folder to a Git repository.
-2. In Render, choose **New +** → **Blueprint**.
-3. Select your repository.
-4. Render will use `render.yaml` automatically.
-
-### Option B: Manual Web Service
-
-Create a new Render **Web Service** with these settings:
-
-- **Environment:** Python
-- **Build Command:**
-
-  ```bash
-  pip install -r requirements.txt && python build_frontend.py --build-only
-  ```
-
-- **Start Command:**
-
-  ```bash
-  gunicorn run:app --bind 0.0.0.0:$PORT
-  ```
-
-- **Health Check Path:** `/healthz`
-
-`build_frontend.py --build-only` uses system npm when available. If npm is unavailable, it uses `nodeenv` from `requirements.txt` to install a local Node.js runtime automatically. You can set `NODE_VERSION=20.20.2` or use the included `render.yaml`.
-
-Because the heavy frontend build runs in Render’s **build** phase, the **start** command only imports `run:app` and binds Gunicorn quickly. Background rebuild remains available as a safety net if `dist/` is ever missing at runtime.
-
-## Environment variables
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `PORT` | `8000` locally / set by Render | Port for Flask/Gunicorn. |
-| `DISCORD_API_BASE` | `https://discord.com/api/v10` | Upstream Discord REST API base URL. |
-| `CORS_ORIGINS` | `*` | CORS setting for `/api/*`; same-origin production use usually does not need this changed. |
-| `PROXY_TIMEOUT` | `30` | Discord proxy request timeout in seconds. |
-| `FLASK_DEBUG` | `0` | Set to `1` only for local debugging. |
-| `AUTO_BUILD_FRONTEND` | `1` | When enabled, missing `dist/index.html` triggers a frontend build (via background worker from `run.py`, or synchronously from `build_frontend.py`). Set to `0` to disable. |
-| `BACKGROUND_BUILD` | `1` | When enabled, `run.py` spawns `build_frontend.py` in the background instead of blocking startup. Set to `0` to disable background spawning. |
-| `NODE_VERSION` | `20.20.2` | Node.js version for the local `nodeenv` fallback when system npm is unavailable. |
-| `NODEENV_DIR` | `.nodeenv` | Directory for the local Node.js runtime installed by `nodeenv`. |
-| `NPM_BINARY` | unset | Optional explicit path/name for npm. |
-| `DISCORD_USER_AGENT` | `DiscordBot (https://arena.ai, 1.0)` | Bot-style User-Agent used by the Flask Discord API proxy. Do not use a browser User-Agent. |
-| `DISCORD_CLIENT_ID` | unset | Discord OAuth2 application client ID. |
-| `DISCORD_CLIENT_SECRET` | unset | Discord OAuth2 application client secret. |
-| `DISCORD_OAUTH_SCOPES` | `identify email guilds` | OAuth2 scopes requested at login. |
-| `PUBLIC_BASE_URL` | unset | Public site URL (used to build the OAuth2 redirect URI). |
-| `DISCORD_REDIRECT_URI` | unset | Optional explicit OAuth2 callback URL. |
-| `OAUTH_STATE_MAX_AGE` | `600` | OAuth2 CSRF state cookie lifetime in seconds. |
-
-## Login / token format
-
-Paste your bot token directly into the login form. The app accepts either of these formats:
+Paste the bot token into the login form. Both formats are accepted:
 
 ```text
 YOUR_BOT_TOKEN
 Bot YOUR_BOT_TOKEN
 ```
 
-The frontend normalizes the value before sending requests, so the Discord API receives the expected `Authorization: Bot ...` header.
+The client normalises the value, so Discord receives the expected `Authorization: Bot ...` header.
 
-## Responsive UI
+A 401 response produces: *"Invalid bot token. Personal account/user tokens are not supported."*
 
-The app now has separate layouts for desktop/tablet and phones:
-
-- **Desktop/computer (`md` and wider):** Discord-style multi-column layout with server rail, channel/DM sidebar, main chat, and optional member list.
-- **Mobile (`< md`):** single-panel navigation with a top bar and bottom nav for Servers, Channels/DMs, Chat, and Members. This avoids squeezing desktop sidebars onto small screens and keeps touch targets large.
-
-The mobile layout follows Discord's familiar navigation model: servers/channels are panels, chat is the main view, and the member list is a separate panel accessible from chat.
-
-## Message loading and sending
-
-For bot-token mode, this app uses Discord's documented Channel endpoints:
-
-- `GET /channels/{channel.id}/messages` to load recent and older messages.
-- `POST /channels/{channel.id}/messages` to send a message.
-
-Discord requires the bot to have the right server/channel permissions. At minimum, invite the bot with these permissions and make sure channel overwrites do not deny them:
-
-- **View Channels**
-- **Read Message History**
-- **Send Messages**
-- **Attach Files** if you want uploads to work
-
-To receive live gateway message events and full message content, enable the **Message Content Intent** in the Discord Developer Portal under **Bot → Privileged Gateway Intents**. The app requests Gateway intents for guilds, guild members, guild messages, direct messages, and message content. Without the Message Content intent, Discord may return message objects but hide message text/content in some situations.
-
-Discord message content has a 2000 character limit for normal messages. The frontend validates this before sending.
-
-File uploads are supported in bot-token mode using Discord multipart message uploads. The UI supports selecting up to 10 files per message and validates a 25 MB per-file limit before sending.
-
-## Functional UI controls and settings
-
-The app's buttons have been audited so visible controls either perform a supported action or clearly open a supported Discord/browser page. Unsupported personal-account mutation buttons were removed instead of pretending to change Discord account security settings.
-
-Implemented controls include:
-
-- **Message composer:** sends text, validates Discord's 2000-character limit, selects/removes attachments, uploads up to 10 files, inserts a quick emoji, and restores the draft if sending fails.
-- **Message actions:** add a thumbs-up reaction in bot mode, copy a reply mention, and copy message text.
-- **Search:** channel and DM message areas filter loaded messages. `Ctrl + K` focuses the current search box.
-- **Keybinds:** `Ctrl + Shift + M` toggles local mute, `Ctrl + Shift + D` toggles local deafen, `Ctrl + Shift + U` opens the upload picker, and `Escape` closes settings.
-- **Unread badges:** when enabled, unread counts appear on channels/DMs/servers and in the browser tab title for off-channel/background messages.
-- **Notifications:** desktop notifications request browser permission and fire for incoming off-channel/background messages when enabled. Message/notification sounds use a small local browser-generated tone; browsers may require a user interaction before playing sound.
-- **Voice & Video settings:** saves local mute/deafen status and browser input/output device preferences after refreshing media devices.
-- **Appearance/accessibility:** theme, compact mode, chat font size, message-group spacing, role colors, saturation, reduced motion, and high contrast are applied to the live UI and persisted in local storage.
-- **Streamer mode:** masks visible user names/IDs in supported UI areas.
-- **Profiles:** saves a local profile preview/display-name preference only. Discord global profile/avatar changes must be done in Discord because bot/OAuth2 API sessions cannot mutate those personal account settings.
-- **Server rail:** add/explore buttons open Discord's supported developer portal/server discovery pages.
-- **DM list:** existing bot DM channels are listed and a bot DM can be created by recipient user ID where Discord permits it.
-
-Account password, email, phone, 2FA, disable-account, delete-account, and global avatar/profile mutations are intentionally not exposed because they are not supported by Discord bot-token/OAuth2 API mode.
-
-### Discord `internal network error` / code `40333`
-
-If Discord returns:
-
-```json
-{"message":"internal network error","code":40333}
-```
-
-that usually is not a normal missing-permission error. Discord/Cloudflare can return this response when Bot API requests look like browser traffic. The Flask proxy now intentionally **does not forward the browser User-Agent** and instead sends a bot-style `DISCORD_USER_AGENT`. If this still happens, the hosting provider's shared IP may be blocked by Discord/Cloudflare; try a different host or a VPS/static IP.
-
-OAuth2 login can show the signed-in user and guild list, but OAuth2 user tokens from the official flow cannot be used to act like the Discord client, read arbitrary private messages, or send messages as the user. Use bot-token mode for loading and sending channel messages.
+---
 
 ## Discord OAuth2 login
 
-This project now supports official Discord OAuth2 Authorization Code login. Discord's OAuth2 docs describe the authorization code grant as the standard flow where the user is redirected to Discord, Discord returns a temporary `code`, and the backend exchanges that code for a Bearer access token without ever asking for the user's password or personal token [1](https://discord.com/developers/docs/topics/oauth2).
+Discord's authorization-code grant is the standard flow: the user is redirected to Discord, Discord returns a temporary `code`, and the backend exchanges it for a Bearer token — without ever seeing a password or personal token.
 
-### 1. Create/configure your Discord application
+### 1. Configure the Discord application
 
 1. Go to <https://discord.com/developers/applications>.
-2. Open your application, or create a new one.
-3. Go to **OAuth2**.
-4. Copy the **Client ID** and **Client Secret**.
-5. Add this redirect URL:
+2. Open your application → **OAuth2**.
+3. Copy the **Client ID** and **Client Secret**.
+4. Add the redirect URL:
 
    ```text
    https://YOUR-RENDER-APP.onrender.com/auth/discord/callback
    ```
 
-   For local testing, add:
+   For local testing also add:
 
    ```text
    http://localhost:8000/auth/discord/callback
    ```
 
-6. Use these scopes:
+5. Use these scopes:
 
    ```text
    identify email guilds
    ```
 
-`identify` allows `/users/@me`, and `guilds` allows `/users/@me/guilds` for basic guild membership data [1](https://discord.com/developers/docs/topics/oauth2).
-
 ### 2. Set environment variables
-
-On Render, set these environment variables:
 
 ```env
 DISCORD_CLIENT_ID=your_client_id
 DISCORD_CLIENT_SECRET=your_client_secret
 DISCORD_OAUTH_SCOPES=identify email guilds
 PUBLIC_BASE_URL=https://YOUR-RENDER-APP.onrender.com
+SECRET_KEY=<python -c "import secrets; print(secrets.token_urlsafe(48))">
 ```
 
-`DISCORD_REDIRECT_URI` is optional. If unset, the app uses:
+**`PUBLIC_BASE_URL` is required.** Without it the server has no trusted source for an absolute URL and OAuth login fails closed with a 503 telling you exactly what to set. (Alternatively set `DISCORD_REDIRECT_URI` explicitly, or list your hostname in `TRUSTED_HOSTS`.)
 
-```text
-PUBLIC_BASE_URL/auth/discord/callback
-```
+### 3. Flow
 
-### 3. How it works in this app
-
-- The login screen calls `/api/oauth/config` to see whether OAuth2 is configured.
-- The **Continue with Discord OAuth2** button redirects to `/auth/discord/login`.
-- Flask creates a CSRF `state` cookie and redirects to Discord.
-- Discord redirects back to `/auth/discord/callback` with a temporary `code`.
-- Flask validates `state`, exchanges the code at Discord's `/oauth2/token`, then redirects back to the frontend.
-- The frontend uses the OAuth2 Bearer token only for safe OAuth2 endpoints like `/users/@me` and `/users/@me/guilds`.
+1. The login screen calls `/api/oauth/config` to check whether OAuth2 is usable.
+2. **Continue with Discord OAuth2** → `/auth/discord/login`.
+3. Flask sets a CSRF `state` cookie and redirects to Discord.
+4. Discord redirects back to `/auth/discord/callback` with a `code`.
+5. Flask validates `state` and its age, exchanges the code at `/oauth2/token`.
+6. The token is placed in a signed `HttpOnly` cookie; the browser is redirected to `/?oauth_pending=1`.
+7. The SPA calls `POST /api/oauth/exchange` once, receives the token, and the cookie is cleared.
 
 ### OAuth2 limitations
 
-OAuth2 is not the same as a personal account token. It can safely identify the user and list guilds granted by scopes, but it does not let this app read private messages or act as the user's Discord client. For server/channel/message bot features, use the bot-token login.
+OAuth2 is not a personal account token. It can identify the user and list guilds granted by the requested scopes, but it cannot read private messages or act as the user's Discord client. Use bot-token mode for server/channel/message features. In OAuth mode the app shows a read-only dashboard instead of pretending otherwise.
+
+---
 
 ## Personal account tokens
 
-Personal Discord account/user tokens are intentionally not supported. Using a user token for automated API access is unsafe, can compromise the account, and violates Discord's platform rules. This is why the project uses Discord OAuth2 instead of asking users to paste account tokens. Use one of these supported options instead:
+Personal Discord account/user tokens are intentionally **not** supported. Using a user token for automated API access is unsafe, can compromise the account, and violates Discord's platform rules. Use one of the supported options:
 
-- **Bot token:** best for this app's server/channel/message features.
-- **Discord OAuth2:** best if you only need a user to sign in and share basic profile/guild information through Discord's official authorization flow.
+* **Bot token** — for server/channel/message features.
+* **Discord OAuth2** — to sign a user in and share basic profile/guild data through Discord's official flow.
 
-OAuth2 sign-in is implemented in this project through the Flask backend routes `/auth/discord/login` and `/auth/discord/callback`.
+---
+
+## Messages, DMs and Discord API limits
+
+### Channel messages (bot mode)
+
+* `GET /channels/{channel.id}/messages` — load recent and older messages (paginated 50 at a time).
+* `POST /channels/{channel.id}/messages` — send, including multipart uploads.
+
+The bot needs **View Channels**, **Read Message History**, **Send Messages**, and **Attach Files** (for uploads). Channel permission overwrites must not deny them.
+
+### Direct messages — important
+
+`GET /users/@me/channels` requires the `dm_channels.read` OAuth2 scope, which Discord restricts to **approved partners**. Bot tokens receive `401`, so a bot **cannot enumerate its existing DMs**.
+
+What this client does instead:
+
+* `POST /users/@me/channels` with a `recipient_id` **does** work for bots, so you can start a DM from the **+** button in the DM sidebar by entering a Discord user ID.
+* Conversations started this way are **persisted in `localStorage`, per bot**, so the DM list survives a reload instead of being permanently empty.
+* Hiding a conversation removes it from that local list.
+* If the API ever does return DMs, they are merged with the locally stored ones.
+
+### Message limits
+
+Discord's limits are enforced in one place (`validateOutgoingMessage`) shared by the composer and the API client, so the two cannot disagree:
+
+* 2000 characters per message.
+* Up to 10 files per message.
+* **25 MB total per message** — Discord's cap applies to the whole request, not to each file. (The proxy allows 32 MB to leave room for the multipart envelope; configure with `MAX_UPLOAD_MB`.)
+
+Failed sends remove the optimistic message and **restore the draft**, including attachments.
+
+### Rate limits
+
+`429` responses are retried up to **3 times** within a 30-second budget, honouring `retry_after`. Previously the retry recursed with no cap, so a persistently throttled route could spin indefinitely. When the budget is exhausted the user gets a readable message.
+
+### Realtime gateway
+
+The Gateway WebSocket is opened directly from the browser (a WSGI proxy cannot multiplex it). Requested intents: `GUILDS`, `GUILD_MEMBERS`, `GUILD_MESSAGES`, `DIRECT_MESSAGES`, `MESSAGE_CONTENT`.
+
+`GUILD_MEMBERS` and `MESSAGE_CONTENT` are **privileged**. Enable them in the Developer Portal under **Bot → Privileged Gateway Intents**, or Discord closes the socket with code `4014`.
+
+The gateway implementation:
+
+* Sends the first heartbeat at `interval × jitter`, then on the full interval, using `setTimeout` so a blocked event loop cannot stack beats.
+* Treats a missed ACK as a zombie connection and reconnects with `RESUME`.
+* Handles op 1 (heartbeat request), op 7 (reconnect) and op 9 (invalid session, resuming only when Discord says it is possible).
+* Reconnects with exponential backoff and jitter, up to 6 attempts, using `resume_gateway_url` when available.
+* **Surfaces fatal close codes.** `4004`, `4010`, `4011`, `4012`, `4013` and `4014` are mapped to specific, actionable messages — for `4014` the message names the exact privileged intents to enable. The connection state is shown in the bottom-left user panel. Previously every close code was discarded and the client silently stopped receiving events.
+
+---
+
+## UI and settings
+
+### Responsive layouts
+
+* **Desktop/tablet (`md` and wider)** — Discord-style columns: server rail, channel/DM sidebar, chat, optional member list.
+* **Mobile (`< md`)** — single-panel navigation with a top bar and bottom nav for Servers, Channels/DMs, Chat and Members.
+
+### Message markup
+
+`src/utils/markdown.ts` renders: code fences (with a language tag), inline code, **bold**, *italic*, ***both***, __underline__, ~~strikethrough~~, ||spoilers||, `#`/`##`/`###` headings, blockquotes (consecutive lines merge), autolinks, user/role/channel mentions, static and animated custom emoji, and `<t:unix:style>` timestamps in all six styles.
+
+Mentions resolve to **real names** — nicknames first, then global name, then username — using the message's `mentions`, the guild member list, and the role/channel lists. Unresolvable IDs render in a muted style rather than pretending to be a real name. Streamer Mode masks all of them. Markup inside code spans and fences is never transformed.
+
+The guild and DM views share this one renderer. They previously had separate copies that had drifted apart, and the mention/emoji/blockquote rules in both matched a literal `<` against already-escaped text — so they never fired at all.
+
+### Functional controls
+
+Visible controls either perform a supported action or open a supported Discord/browser page:
+
+* **Composer** — sends text, validates Discord's limits, selects/removes attachments, inserts a quick emoji, restores the draft on failure.
+* **Message actions** — add a 👍 reaction (bot mode), copy a reply mention, copy message text.
+* **Reactions** — incoming `MESSAGE_REACTION_ADD` events update counts live.
+* **Search** — channel and DM areas filter loaded messages; `Ctrl+K` focuses the active search box.
+* **Keybinds** — `Ctrl+Shift+M` mute, `Ctrl+Shift+D` deafen, `Ctrl+Shift+U` upload picker, `Escape` closes settings.
+* **Unread badges** — per channel/DM/server, plus the browser tab title.
+* **Notifications** — desktop notifications request permission through the store, so the permission result and the saved preference cannot disagree. A denied or blocked state is reported to the user. Sounds use a single reused `AudioContext` (constructing one per message leaks contexts).
+* **Voice & Video** — saves local mute/deafen state and browser input/output device preferences.
+* **Appearance/accessibility** — theme, compact mode, chat font size, message-group spacing, role colours, saturation, reduced motion and high contrast are applied live and persisted.
+* **Streamer Mode** — masks user names, role names and channel names.
+* **Profiles** — saves a local preview/display-name preference only.
+* **DM list** — start a DM by user ID, hide conversations, group DM icons.
+
+Account password, email, phone, 2FA, disable-account, delete-account and global avatar/profile mutations are **not** exposed: bot-token and OAuth2 API sessions cannot perform them.
+
+Presentation filters (saturation, high contrast) are applied to `<html>`, never to `<body>`. A `filter` on a non-root element becomes the containing block for `position: fixed` descendants, which would trap the full-screen settings modal, and they are only engaged when a setting actually needs them.
+
+---
+
+## Environment variables
+
+See `.env.example` for the annotated list. Summary:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `8000` / set by Render | Flask/Gunicorn port. |
+| `SECRET_KEY` | generated | Signs the OAuth2 handoff cookie. Persisted to `.flask_secret_key` if unset — set it explicitly on ephemeral filesystems. |
+| `DISCORD_API_BASE` | `https://discord.com/api/v10` | Upstream REST base URL. |
+| `CORS_ORIGINS` | *(empty)* | Empty = same-origin only. `*` is accepted but makes the deployment an open relay. |
+| `PROXY_TIMEOUT` | `30` | Upstream timeout, seconds. |
+| `MAX_UPLOAD_MB` | `32` | Maximum request body the proxy buffers. |
+| `FLASK_DEBUG` | `0` | Local debugging only. |
+| `AUTO_BUILD_FRONTEND` | `1` | Build when `dist/index.html` is missing. |
+| `BACKGROUND_BUILD` | `1` | Spawn the build in the background rather than blocking startup. |
+| `RUN_STARTUP_CHECKS` | `0` | Also run light checks when `dist/` already exists. |
+| `NODE_VERSION` | `22.22.3` | Node for the `nodeenv` fallback. Node 20 reached EOL in April 2026. |
+| `NODEENV_DIR` | `.nodeenv` | Where `nodeenv` installs Node. |
+| `NPM_BINARY` | unset | Explicit npm path. |
+| `FLASK_BACKEND_URL` | `http://127.0.0.1:8000` | Where the Vite dev server proxies `/api` and `/auth`. |
+| `DISCORD_USER_AGENT` | `DiscordBot (…)` | Bot-style UA for the proxy. Do not use a browser UA. |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | unset | OAuth2 application credentials. |
+| `DISCORD_OAUTH_SCOPES` | `identify email guilds` | Requested scopes. |
+| `PUBLIC_BASE_URL` | unset | **Required for OAuth2.** Public site URL used to build the redirect URI. |
+| `DISCORD_REDIRECT_URI` | unset | Explicit callback URL, overrides `PUBLIC_BASE_URL`. |
+| `TRUSTED_HOSTS` | *(empty)* | Comma-separated hostnames whose `X-Forwarded-Host` may be used when `PUBLIC_BASE_URL` is unset. |
+| `OAUTH_STATE_MAX_AGE` | `600` | CSRF state cookie lifetime, seconds. |
+| `OAUTH_HANDOFF_MAX_AGE` | `120` | One-time token handoff cookie lifetime, seconds. |
+
+---
+
+## Deploy on Render
+
+### Option A — Blueprint
+
+Push the repository and choose **New +** → **Blueprint**. Render reads `render.yaml`. Then set `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` and `PUBLIC_BASE_URL` in the dashboard (they are marked `sync: false`).
+
+### Option B — Manual Web Service
+
+* **Environment:** Python
+* **Build Command:**
+
+  ```bash
+  pip install -r requirements.txt && python build_frontend.py --build-only
+  ```
+
+* **Start Command:**
+
+  ```bash
+  gunicorn run:app --bind 0.0.0.0:$PORT
+  ```
+
+* **Health Check Path:** `/healthz`
+
+`build_frontend.py --build-only` uses system npm when available, otherwise installs a local Node runtime via `nodeenv`. Because the heavy build runs in Render's **build** phase, the start command only imports `run:app` and binds Gunicorn quickly. The background rebuild remains as a safety net if `dist/` is ever missing at runtime.
+
+---
+
+## Dependency audit
+
+`npm audit --omit=dev` reports **0** vulnerabilities — but only because every outstanding advisory is in the build toolchain, which is never shipped to the browser. That makes it a poor gate on its own.
+
+`npm run audit:review` audits the **full** tree and fails on any high/critical advisory in a production dependency, or any dev advisory that is not on an explicit allowlist with a written justification in `scripts/audit-check.mjs`.
+
+Current accepted findings:
+
+| Package | Advisory | Why it is accepted |
+| --- | --- | --- |
+| `braces` | GHSA-vfj7-8cjw-p6xm (high, CVSS 7.5) | **No patched release exists** (`first_patched_version: null`). Reached only via `micromatch` ← `vite-plugin-singlefile`, a build-time plugin that is never bundled into `dist/`. It only ever sees glob patterns from our own Vite config, so the stack-exhaustion DoS is not reachable from untrusted input. `npm audit fix --force` "resolves" this by downgrading to `vite-plugin-singlefile@0.9.0`, which is strictly worse. |
+
+All other advisories found during the last review (postcss, browserslist, esbuild, nanoid, source-map-js, baseline-browser-mapping) were fixed by `npm audit fix`.
+
+---
+
+## Tests
+
+```bash
+npm test                     # 102 unit tests (Vitest)
+python -m pytest tests -v    # 65 backend tests (pytest + Flask test client)
+```
+
+Frontend coverage: markdown rendering for every supported construct, the full XSS payload battery with structural assertions, code-block protection, mention/role/channel/emoji/timestamp resolution, streamer-mode masking, sentinel forgery, message grouping rules, timestamp formatting, upload and length validation, gateway intent bits, and CDN URL construction.
+
+Backend coverage: health and SPA serving, path traversal, trusted-host handling and host-header injection, OAuth state/CSRF validation, error-parameter sanitisation, the signed handoff cookie (issue, exchange, tamper, forge, expire, path scoping), token revocation, proxy endpoint guarding, header forwarding, error-detail leakage, CORS policy, upload limits and security headers.
+
+---
 
 ## Notes and limitations
 
-- The Flask proxy handles Discord REST API calls only. The Discord Gateway WebSocket connection is still made directly from the browser.
-- The app expects a Discord bot token entered in the login form. Do not hard-code this token in source code or environment variables.
-- Some Discord API features require privileged bot intents and proper server permissions.
-- `vite-plugin-singlefile` is enabled, so the production build is a compact single `dist/index.html` bundle.
-- On Render, the `render.yaml` build command runs `python build_frontend.py --build-only`, which builds the frontend with system npm or the `nodeenv` fallback. Runtime background rebuild in `run.py` remains as a safety net for missing build output and does not delay Gunicorn binding.
-
-## Verification commands used
-
-```bash
-npm install
-npx tsc --noEmit
-python -m py_compile run.py build_frontend.py
-npm audit --omit=dev --audit-level=high
-python build_frontend.py --build-only
-python run.py
-```
+* The Flask proxy handles Discord **REST** calls only. The Gateway WebSocket is opened directly from the browser.
+* `vite-plugin-singlefile` is enabled, so the production build is a single self-contained `dist/index.html` (~431 kB, ~122 kB gzipped).
+* Some Discord features require privileged bot intents and correct server permissions.
+* Never hard-code a bot token in source or environment variables.
+* The repository previously contained a committed Python virtualenv under `.local/` (211 files, 2.2 MB) that could not even import Flask. It has been removed from tracking and root `.gitignore` now prevents a recurrence.

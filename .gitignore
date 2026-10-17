@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Root ignore rules.
+#
+# The application source lives in discord-clone-src/ and has its own
+# .gitignore. These root rules exist so that virtualenvs, local toolchains and
+# build artifacts created at the repository root are never committed again.
+# ---------------------------------------------------------------------------
+
+# Python virtualenvs / local site-packages.
+# A broken, partial virtualenv was committed here once (.local/lib/python3.13/
+# site-packages). It could not even import Flask (jinja2/markupsafe/click were
+# missing), so it was pure dead weight. Never vendor dependencies into git.
+.local/
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Node.
+node_modules/
+.npm/
+.nvm/
+
+# Local Node runtime installed by nodeenv, and build worker state.
+.nodeenv/
+.frontend_build_status.json
+.frontend_build.lock
+.frontend_build.log
+
+# Generated Flask secret key.
+.flask_secret_key
+.flask_secret_key.tmp.*
+
+# Build output.
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+
+# Secrets and environment files.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.token
+
+# OS / editor cruft.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Logs.
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
